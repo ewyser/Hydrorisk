@@ -3,3 +3,7 @@
 
 volume/*
 !volume/.gitkeep
+
+*.tar
+
+volume/

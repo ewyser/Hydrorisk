@@ -10,8 +10,11 @@ ENV JULIA_PREFIX=/opt/julia
 
 # zip is required at runtime: Hydrorisk.__init__ -> build_plugin() zips
 # gis/hydrorisk_plugin/ into gis/hydrorisk_plugin.zip on every module load.
+# libsqlite3-0 is required by GDAL_jll's bundled libproj.so, which links
+# against sqlite3 for its projection database - without it, precompiling
+# GDAL/ArchGDAL fails with "libsqlite3.so.0: cannot open shared object file".
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    wget ca-certificates zip \
+    wget ca-certificates zip libsqlite3-0 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY unix/install/julia.sh /usr/local/bin/
@@ -49,8 +52,11 @@ CMD ["bash"]
 FROM ubuntu:22.04 AS runtime
 
 ENV DEBIAN_FRONTEND=noninteractive
+# libsqlite3-0 needed here too - GDAL_jll's libproj.so is dlopen'd again at
+# runtime (Hydrorisk.jl's own GDAL/ArchGDAL usage), not just during the
+# precompile step above.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    zip ca-certificates \
+    zip ca-certificates libsqlite3-0 \
     && rm -rf /var/lib/apt/lists/*
 
 ENV JULIA_DIR=/opt/julia

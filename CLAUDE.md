@@ -2,7 +2,7 @@
 
 Builds Docker images for three services:
 
-1. **compute-engine** — cORIUm.jl + OsmotiC.jl
+1. **daemon** — cORIUm.jl + OsmotiC.jl
 2. **db** — Datastore.jl
 3. **api** — Hydrorisk.jl
 
@@ -12,7 +12,7 @@ of these, not git clones.
 
 ---
 
-## Plan: compute-engine Docker image from local package copies
+## Plan: daemon Docker image from local package copies
 
 ### Context
 
@@ -21,7 +21,7 @@ it with a `git clone --branch dev` inside a cache-busted `source` stage that
 needs a GitHub token build secret.
 
 Cloning is redundant and forces private-repo auth. This change reworks the
-Dockerfile to build the full **compute-engine** image (cORIUm + OsmotiC, with
+Dockerfile to build the full **daemon** image (cORIUm + OsmotiC, with
 OsmotiC's path-dependency Datastore) from local copies instead, removing the
 clone, the `CACHEBUST` machinery and the GitHub token secret.
 
@@ -105,7 +105,7 @@ Add `OSMOTIC` to the environment note; no logic change — `setup_mpi.jl`
 reconfigures HDF5.jl/MPIPreferences in the shared depot, which OsmotiC picks up.
 A dedicated OsmotiC boot step, if needed, is a follow-up.
 
-#### 4. `docker/docker-build-tar.sh`
+#### 4. `docker/docker-build.sh`
 
 - Call `"$SH_DIR/prep-context.sh"` before `docker build` (abort on failure).
 - Drop `--secret id=github_token,...`, `--build-arg CACHEBUST=...`, `SECRET_TOKEN`.
@@ -124,7 +124,7 @@ context/packages/**/.git/
 
 - `docker/Dockerfile` — main rework
 - `docker/prep-context.sh` — new staging script
-- `docker/docker-build-tar.sh` — drop secret/cachebust, run prep
+- `docker/docker-build.sh` — drop secret/cachebust, run prep
 - `docker/.dockerignore`, `docker/.gitignore` — new
 - `docker/unix/entrypoint.sh` — env note only
 
@@ -133,13 +133,13 @@ context/packages/**/.git/
 1. `bash docker/prep-context.sh` → confirm
    `docker/context/packages/{cORIUm.jl,OsmotiC.jl,Datastore.jl}` each contain
    `Project.toml`, `Manifest.toml`, `src/`, and no `.git/`.
-2. `cd docker && DOCKER_BUILDKIT=1 docker build -f Dockerfile --target deps -t ce:deps .`
+2. `cd docker && DOCKER_BUILDKIT=1 docker build -f Dockerfile --target deps -t daemon:deps .`
    → dependency resolution for both projects succeeds with no network/token.
-3. `docker build -f Dockerfile --target runtime -t ce:runtime .` completes; both
+3. `docker build -f Dockerfile --target runtime -t daemon:runtime .` completes; both
    precompile steps pass.
-4. `docker run --rm ce:runtime julia --project=$CORIUM  -e 'using cORIUm; println("cORIUm ok")'`
-5. `docker run --rm ce:runtime julia --project=$OSMOTIC -e 'using OsmotiC; println("OsmotiC ok")'`
-6. `docker run --rm ce:runtime bash -lc 'mpiexec --version && julia -e "using MPI; MPI.Init(); println(MPI.Comm_size(MPI.COMM_WORLD))"'`
+4. `docker run --rm daemon:runtime julia --project=$CORIUM  -e 'using cORIUm; println("cORIUm ok")'`
+5. `docker run --rm daemon:runtime julia --project=$OSMOTIC -e 'using OsmotiC; println("OsmotiC ok")'`
+6. `docker run --rm daemon:runtime bash -lc 'mpiexec --version && julia -e "using MPI; MPI.Init(); println(MPI.Comm_size(MPI.COMM_WORLD))"'`
    (regression check on MPI/HDF5 wiring).
-7. `bash docker/docker-build-tar.sh` (select `runtime`) produces
+7. `bash docker/docker-build.sh` (select `runtime`) produces
    `docker/shipping/image/ubuntu-corium-runtime.tar` with no token prompt.

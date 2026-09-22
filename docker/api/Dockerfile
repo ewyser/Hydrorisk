@@ -88,4 +88,4 @@ RUN julia --project=${HYDRORISK} -e 'using Pkg; Pkg.precompile()'
 
 EXPOSE 8000
 ENTRYPOINT ["/home/apiuser/entrypoint.sh"]
-CMD ["julia", "--project=/home/apiuser/packages/wrap/Hydrorisk.jl", "-e", "using Hydrorisk; Hydrorisk.start_server(port=8000, cli=false)"]
+CMD ["julia", "--project=/home/apiuser/packages/wrap/Hydrorisk.jl", "-e", "using Hydrorisk; Hydrorisk.start_server(port=8000, host=\"0.0.0.0\", cli=false)"]

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # --- output-mount permissions + privilege drop --------------------------
-# Same rationale as docker/compute-engine/unix/entrypoint.sh: the container
+# Same rationale as docker/daemon/unix/entrypoint.sh: the container
 # starts as root so a bind-mounted $VOLUME_MOUNT can be made writable by
 # mpiuser before anything else runs (OpenMPI refuses to run as root anyway).
 if [ "$(id -u)" = "0" ]; then
@@ -51,7 +51,7 @@ fi
 
 # --- MPI/CUDA/HDF5 configuration ---------------------------------------
 # Only relevant to the compute role - skipped entirely for db/api, which
-# never touch MPI or a GPU. See docker/compute-engine/unix/entrypoint.sh for
+# never touch MPI or a GPU. See docker/daemon/unix/entrypoint.sh for
 # the full rationale (regenerated fresh every start against whatever
 # GPU/MPI is actually present, rather than baked in at build time).
 _configure_mpi() {
@@ -69,7 +69,7 @@ _configure_mpi() {
 }
 
 # --- role dispatch -------------------------------------------------------
-# This image bundles all three eventual services (compute-engine, db, api)
+# This image bundles all three eventual services (daemon, db, api)
 # for a first combined end-to-end test. ROLE picks which one to act as;
 # unset/anything else falls back to a bare shell, same as before ROLE
 # existed. `docker run` still lets you override with an explicit CMD too.

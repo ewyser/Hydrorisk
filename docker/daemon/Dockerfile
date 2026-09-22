@@ -41,12 +41,12 @@ ENV PATH=${JULIA_PREFIX}/bin:${HDF5_PREFIX}/bin:${OPENMPI_PREFIX}/bin:${CUDA_ROO
 ENV LD_LIBRARY_PATH=${HDF5_PREFIX}/lib:${OPENMPI_PREFIX}/lib:${CUDA_ROOT}/lib64:$LD_LIBRARY_PATH
 ENV OMPI_MCA_opal_warn_on_missing_libcuda=0
 
-# The compute-engine bundles two packages side by side: cORIUm.jl (the solver)
+# The daemon bundles two packages side by side: cORIUm.jl (the solver)
 # and OsmotiC.jl (which path-depends on ../cORIUm.jl and ../Datastore.jl - see
 # OsmotiC.jl/Manifest.toml). They are staged into the build context by
 # prep-context.sh, preserving that sibling layout so an offline
 # Pkg.instantiate() resolves the relative path-deps. The staging dir is
-# .context/ (hidden, transient - see prep-context.sh / docker-build-tar.sh).
+# .context/ (hidden, transient - see prep-context.sh / docker-build.sh).
 ENV PKGROOT=/home/packages
 ENV CORIUM=${PKGROOT}/cORIUm.jl
 ENV OSMOTIC=${PKGROOT}/OsmotiC.jl

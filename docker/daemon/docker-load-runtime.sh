@@ -1,7 +1,7 @@
 #!/bin/bash
 # docker-load-run.sh
 #
-# Deployment-side counterpart to docker-build-tar.sh: loads a saved
+# Deployment-side counterpart to docker-build.sh: loads a saved
 # cORIUm.jl runtime image tarball and runs it. Run this on the machine
 # that will actually execute the container (the GPU host) - see
 # docs/src/mpi.md, "Docker deployment", for the full build-vs-run story.

@@ -4,10 +4,10 @@ set -euo pipefail
 # prep-context.sh
 #
 # Stages a minimal, sibling-layout-preserving copy of the three Julia packages
-# that make up the compute-engine image into
-#   docker/compute-engine/.context/packages/<pkg>/
-# so that `docker build` (context = docker/compute-engine/) can COPY them.
-# The staging dir is hidden (.context) and transient - docker-build-tar.sh
+# that make up the daemon image into
+#   docker/daemon/.context/packages/<pkg>/
+# so that `docker build` (context = docker/daemon/) can COPY them.
+# The staging dir is hidden (.context) and transient - docker-build.sh
 # removes it after the build.
 #
 # Why staging: the real source trees carry multi-GB .git dirs (cORIUm.jl ~6G,
@@ -17,7 +17,7 @@ set -euo pipefail
 # so all three must sit side by side for Pkg.instantiate() to resolve offline.
 
 SH_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
-# docker/compute-engine/ -> docker/ -> Hydrorisk/ -> git/  (holds the packages)
+# docker/daemon/ -> docker/ -> Hydrorisk/ -> git/  (holds the packages)
 GIT_ROOT=$( cd -- "$SH_DIR/../../.." &> /dev/null && pwd )
 
 DEST="$SH_DIR/.context/packages"

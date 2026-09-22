@@ -8,7 +8,7 @@ set -euo pipefail
 # so that `docker build` (context = docker/db/) can COPY it.
 # The staging dir is hidden (.context) and transient.
 #
-# Unlike compute-engine, Datastore.jl has no local path-deps, so no sibling
+# Unlike daemon, Datastore.jl has no local path-deps, so no sibling
 # layout is needed here - it is staged alone.
 
 SH_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )

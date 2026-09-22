@@ -1,11 +1,11 @@
 # ------------------------------------------------------
 # STAGE 1: BUILD TOOLCHAIN, JULIA, AND LIBRARIES
 #
-# Reuses compute-engine's heavy CUDA/OpenMPI/parallel-HDF5 toolchain: cORIUm
+# Reuses daemon's heavy CUDA/OpenMPI/parallel-HDF5 toolchain: cORIUm
 # and OsmotiC still need it even inside the combined image. Datastore.jl and
 # Hydrorisk.jl don't need it, but sharing one toolchain/depot is simpler than
 # a second base for a first end-to-end test image - see
-# docker/compute-engine/Dockerfile for the line-by-line rationale of this
+# docker/daemon/Dockerfile for the line-by-line rationale of this
 # stage, copied here unchanged.
 # ------------------------------------------------------
 FROM nvidia/cuda:12.5.0-devel-ubuntu22.04 AS toolchain
@@ -71,7 +71,7 @@ RUN julia --project=${HYDRORISK} -e 'using Pkg; Pkg.instantiate()'
 # ------------------------------------------------------
 # STAGE 3: BUILDER
 #
-# Deliberately no Pkg.precompile() here - see compute-engine/Dockerfile's
+# Deliberately no Pkg.precompile() here - see daemon/Dockerfile's
 # STAGE 1c comment for why (root-owned /root/.julia paths baked into .ji
 # caches would EACCES under the runtime image's non-root user).
 # ------------------------------------------------------
@@ -105,7 +105,7 @@ ENV CORIUM_HDF5_HL_LIB=${HDF5_PREFIX}/lib/libhdf5_hl.so
 ARG CUDA_VERSION=12.5
 ENV CORIUM_CUDA_VERSION=${CUDA_VERSION}
 
-# libnuma1/libhwloc15/libevent-2.1-7/openssh-client: compute-engine's MPI
+# libnuma1/libhwloc15/libevent-2.1-7/openssh-client: daemon's MPI
 # runtime deps. zip: Hydrorisk.__init__ -> build_plugin() needs it.
 RUN apt-get update && apt-get install -y \
     libnuma1 libhwloc15 libevent-2.1-7 openssh-client zip \
@@ -125,7 +125,7 @@ RUN chmod +x /home/mpiuser/entrypoint.sh
 
 RUN chown -R mpiuser:mpiuser /opt ${CUDA_ROOT} /home/mpiuser/packages /home/mpiuser/.julia /home/mpiuser/entrypoint.sh
 
-# Stays root at the end - see compute-engine/Dockerfile's runtime-stage
+# Stays root at the end - see daemon/Dockerfile's runtime-stage
 # comment: entrypoint.sh needs root to fix a bind-mounted $VOLUME_MOUNT's
 # permissions before dropping to mpiuser (via runuser) for the workload.
 WORKDIR ${CORIUM}

@@ -5,7 +5,7 @@ set -euo pipefail
 # Builds the hydrorisk-db image (Postgres + PostGIS + Datastore.jl) and
 # saves it into shipping/, alongside docker-run.sh and import-local-data.sh,
 # so the whole shipping/ folder is the deliverable - same pattern as
-# compute-engine's docker-build-tar.sh / shipping/ output.
+# daemon's docker-build.sh / shipping/ output.
 
 SH_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 IMAGE_NAME="hydrorisk-db"

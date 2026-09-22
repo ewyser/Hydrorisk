@@ -1,5 +1,5 @@
 #!/bin/bash
-# docker-build-tar.sh
+# docker-build.sh
 
 # Define valid STAGE options & interactive selection. `deps` is the Dockerfile's
 # intermediate stage (dependency resolution) - useful to target directly when
@@ -20,7 +20,7 @@ select STAGE in "${VALID_STAGES[@]}" "Cancel"; do
 done
 
 SH_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
-# Build context is this directory (docker/compute-engine/). prep-context.sh
+# Build context is this directory (docker/daemon/). prep-context.sh
 # stages cORIUm.jl + OsmotiC.jl + Datastore.jl into .context/packages/ first;
 # the Dockerfile COPYs from there. That hidden staging dir is removed again
 # once the image is saved. A .dockerignore keeps shipping/ and any stray .git
@@ -31,7 +31,7 @@ trap 'rm -rf "$SH_DIR/.context"' EXIT
 
 BUILD_CTXT="$SH_DIR"
 DOCKER_DIR="$SH_DIR"
-IMAGE_NAME="compute-engine"
+IMAGE_NAME="daemon"
 
 # Ship-ready output: the whole shipping/ folder (loader scripts + image/
 # tarball) is the deliverable - zip it and copy it to the target machine.

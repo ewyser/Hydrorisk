@@ -14,7 +14,7 @@ set -euo pipefail
 #   .context/packages/OsmotiC.jl/          (../cORIUm.jl, ../Datastore.jl OK)
 #   .context/packages/wrap/Hydrorisk.jl/   (../../Datastore.jl OK)
 #
-# This is a superset/union of docker/compute-engine/prep-context.sh and
+# This is a superset/union of docker/daemon/prep-context.sh and
 # docker/api/prep-context.sh - see those for the per-service rationale.
 
 SH_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )

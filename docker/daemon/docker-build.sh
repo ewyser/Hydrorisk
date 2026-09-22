@@ -69,9 +69,12 @@ export DOCKER_BUILDKIT=1
 
 # Build & save the image to a tarball
 echo "Building Docker image '$IMAGE_NAME' for stage '$STAGE'..."
+# Phrased positively (docker has no literal --use-cache flag - caching is
+# just its default behavior) so "no" clearly maps to disabling it, instead
+# of the double-negative "Use --no-cache? (y/N)".
 BUILD_ARGS=""
-read -p "Use --no-cache? (y/N): " nocache_input
-if [[ "$nocache_input" =~ ^[Yy]$ ]]; then
+read -p "Use --use-cache? (Y/n): " cache_input
+if [[ "$cache_input" =~ ^[Nn]$ ]]; then
     BUILD_ARGS="--no-cache"
 fi
 # The Dockerfile's `deps` stage COPYs .context/packages/, so Docker

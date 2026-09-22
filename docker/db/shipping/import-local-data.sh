@@ -45,6 +45,21 @@ if ! docker ps --format '{{.Names}}' | grep -qx "$CONTAINER"; then
     exit 1
 fi
 
+# Prompted explicitly and labeled here, rather than left to pg_dump's own
+# bare "Password:" prompt, so it isn't mistaken for the container's own
+# postgres password prompted by docker-run.sh earlier in the same flow.
+# Skipped if the caller already set PGPASSWORD (e.g. non-interactive use per
+# this script's usage comment above).
+if [ -z "${PGPASSWORD:-}" ]; then
+    read -s -p "Source Postgres password (local '${SRC_USER}'@'${SRC_HOST}:${SRC_PORT}'): " PGPASSWORD
+    echo ""
+    export PGPASSWORD
+fi
+# No corresponding target-side password prompt: the container's psql
+# connection below goes over `docker exec`'s local Unix socket, which the
+# base postgis/postgis image trusts unconditionally - only TCP connections
+# to the container require a password.
+
 echo "→ Dumping '$SRC_DB' from $SRC_HOST:$SRC_PORT (user $SRC_USER)..."
 echo "→ Restoring into '$TARGET_DB' inside container '$CONTAINER' (user $TARGET_USER)..."
 

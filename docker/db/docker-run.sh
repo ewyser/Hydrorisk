@@ -42,8 +42,27 @@ fi
 read -p "Container name [hydrorisk-db]: " CONTAINER
 CONTAINER="${CONTAINER:-hydrorisk-db}"
 
-read -p "Host port to publish [5432]: " HOST_PORT
-HOST_PORT="${HOST_PORT:-5432}"
+# Default is 5433, not Postgres's conventional 5432 - a locally-running
+# Postgres (e.g. Postgres.app) already owns 5432 on most dev machines. If
+# that local Postgres happens to be stopped when this runs, Docker would
+# silently bind 5432 with no error, and every later "localhost:5432"
+# connection (pgAdmin, psql, import-local-data.sh) would then talk to the
+# container instead of the real local Postgres, making local data look like
+# it vanished when it was only ever shadowed.
+read -p "Host port to publish [5433]: " HOST_PORT
+HOST_PORT="${HOST_PORT:-5433}"
+
+# Catches the case the default above doesn't: someone explicitly choosing a
+# port that's already claimed by something reachable right now.
+if (exec 3<>/dev/tcp/127.0.0.1/"$HOST_PORT") 2>/dev/null; then
+    exec 3>&-
+    echo "⚠️  Something is already listening on localhost:${HOST_PORT}."
+    read -p "Continue anyway and let Docker attempt the bind? (y/N): " port_confirm
+    if [[ ! "$port_confirm" =~ ^[Yy]$ ]]; then
+        echo "Aborting."
+        exit 1
+    fi
+fi
 
 read -p "Host directory for Postgres data [$DEFAULT_VOLUME_DIR]: " VOLUME_DIR
 VOLUME_DIR="${VOLUME_DIR:-$DEFAULT_VOLUME_DIR}"
@@ -51,10 +70,12 @@ mkdir -p "$VOLUME_DIR"
 
 # Hidden input: this is a credential, don't echo it to the terminal. Loop
 # until non-empty - the entrypoint itself hard-requires POSTGRES_PASSWORD
-# and would otherwise fail deep inside `docker run` instead of here.
+# and would otherwise fail deep inside `docker run` instead of here. Labeled
+# with the container name since import-local-data.sh prompts for a second,
+# different password (the SOURCE local Postgres's) later in this same flow.
 POSTGRES_PASSWORD=""
 while [ -z "$POSTGRES_PASSWORD" ]; do
-    read -s -p "Postgres password: " POSTGRES_PASSWORD
+    read -s -p "Postgres superuser password for the NEW container '${CONTAINER}': " POSTGRES_PASSWORD
     echo ""
     if [ -z "$POSTGRES_PASSWORD" ]; then
         echo "Password cannot be empty."
@@ -73,6 +94,8 @@ if docker ps -a --format '{{.Names}}' | grep -qx "$CONTAINER"; then
     fi
 fi
 
+echo ""
+echo "── Starting container ──"
 echo "Starting ${IMAGE_NAME} as '${CONTAINER}'..."
 docker run -d --name "$CONTAINER" \
     -e POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
@@ -99,12 +122,16 @@ if [ "$READY" -ne 1 ]; then
 fi
 echo "✅ Postgres is ready on localhost:${HOST_PORT} (container '$CONTAINER')."
 
+echo ""
+echo "── Schema init ──"
 read -p "Initialize/verify the Datastore.jl schema now? (Y/n): " schema_input
 if [[ ! "$schema_input" =~ ^[Nn]$ ]]; then
     docker exec "$CONTAINER" bash -lc \
         'source /home/packages/hydrorisk.env && julia --project=$DATASTORE -e "using Datastore; Datastore.get_db()"'
 fi
 
+echo ""
+echo "── Data import ──"
 read -p "Import data from a local Postgres now? (y/N): " import_input
 if [[ "$import_input" =~ ^[Yy]$ ]]; then
     read -p "Source host [localhost]: " SRC_HOST
@@ -122,3 +149,14 @@ fi
 
 echo ""
 echo "✅ Done. Container '$CONTAINER' is running."
+
+echo ""
+echo "── Julia REPL ──"
+read -p "Open a Datastore.jl REPL now? (y/N): " repl_input
+if [[ "$repl_input" =~ ^[Yy]$ ]]; then
+    # Postgres keeps running in the background (started with -d above) -
+    # this just attaches an interactive process alongside it, same as any
+    # other `docker exec`.
+    docker exec -it "$CONTAINER" bash -lc \
+        'source /home/packages/hydrorisk.env && julia --project=$DATASTORE'
+fi

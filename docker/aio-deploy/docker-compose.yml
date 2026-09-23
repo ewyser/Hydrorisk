@@ -1,0 +1,117 @@
+# Topology layer only: references pre-built image tags (no `build:` block).
+# Build/save each image first with its own docker-build.sh (docker/db,
+# docker/api, docker/daemon) - this file just puts them on one network so
+# they can address each other by service name instead of the
+# host.docker.internal workaround docker-run.sh uses standalone.
+#
+# Copy .env.example to .env (in this same directory) and fill it in before
+# running. Image tarballs built by each service's docker-build.sh land in
+# ./images/ - load them into the local Docker daemon first if they aren't
+# already there (a fresh/target machine): ./load-images.sh
+#
+#   docker compose up -d              # db + api only
+#   docker compose --profile daemon up -d daemon   # + daemon
+#
+# daemon's GPU access is host-controlled, not file-controlled: on a machine
+# with an NVIDIA GPU, run this ONCE, outside compose, before ever starting
+# daemon there:
+#   nvidia-ctk runtime configure --runtime=docker --set-as-default && systemctl restart docker
+# That makes Docker's default runtime GPU-aware on that machine permanently,
+# so NVIDIA_VISIBLE_DEVICES below just works. On a machine where that was
+# never run (no GPU, or GPU host not yet prepared), the same env var is
+# inert and daemon starts normally on CPU (cORIUm.jl's own backend selection
+# already falls back to CPU when no GPU is found - see
+# cORIUm.jl/src/boot/needs/backend.jl). No compose-level GPU/non-GPU choice
+# needed - this file is the same on every host.
+
+name: hydrorisk
+
+networks:
+  hydrorisk-net:
+    driver: bridge
+
+services:
+  db:
+    image: hydrorisk-db:latest
+    container_name: hydrorisk-db
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in docker/aio-deploy/.env}
+    ports:
+      - "${DB_HOST_PORT:-5433}:5432"
+    volumes:
+      - ../volume/db-data:/var/lib/postgresql/data
+    networks:
+      - hydrorisk-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  api:
+    image: hydrorisk-api:latest
+    container_name: hydrorisk-api
+    environment:
+      HYDRORISK_DB_HOST: db
+      HYDRORISK_DB_PORT: "5432"
+      HYDRORISK_DB_USER: ${DB_USER:-postgres}
+      HYDRORISK_DB_NAME: ${DB_NAME:-hydrorisk}
+      PSWD_DB: ${POSTGRES_PASSWORD}
+      HYDRORISK_API: "true"
+    ports:
+      - "${API_HOST_PORT:-8001}:8000"
+    networks:
+      - hydrorisk-net
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  daemon:
+    image: daemon:runtime
+    container_name: hydrorisk-daemon
+    # The image's own CMD is an idle `bash` for interactive use
+    # (docker run -it ... bash) - under compose there's no TTY/open stdin,
+    # so that would read EOF immediately and exit right after entrypoint.sh's
+    # MPI/CUDA setup. daemon(self; ) (OsmotiC.jl/src/api/daemon.jl) is the
+    # actual long-running process - it polls the jobs table in db (through
+    # Datastore.jl) and dispatches work to a worker pool, analogous to
+    # api's Hydrorisk.start_server(...). `bash -lc` (not a plain argv list)
+    # so $OSMOTIC - set as an image ENV var in the Dockerfile - expands at
+    # container start.
+    #
+    # Caveat: daemon(;)'s shutdown path only catches InterruptException
+    # (Ctrl+C/SIGINT), not SIGTERM - what `docker stop`/`docker compose
+    # down` actually send. It will still be killed (Docker SIGKILLs after
+    # the stop grace period regardless), just without a clean job-queue/
+    # worker-pool shutdown first. Not fixed here - would need SIGTERM
+    # handling added in OsmotiC.jl itself.
+    # OsmotiC.self.sys.job (mutable, defaults to <OsmotiC.jl package dir>/job
+    # - see OsmotiC.jl/src/boot/needs/types/concrete/self.jl and boot.jl's
+    # `self = Self(sys = Path(), ...)`) is never wired to $VOLUME_MOUNT the
+    # way cORIUm.jl's own dump dir is (resolve_dump_dir("VOLUME_MOUNT") in
+    # cORIUm.jl/src/home/program/workflow/cORE.jl) - reassign it here before
+    # calling daemon() so job output lands on the same bind-mounted host
+    # volume as cORIUm's dump/, instead of disappearing when the container
+    # is removed.
+    command: ["bash", "-lc", "julia --project=$$OSMOTIC -e 'using OsmotiC, CUDA; OsmotiC.self.sys.job = joinpath(ENV[\"VOLUME_MOUNT\"], \"job\"); daemon(OsmotiC.self; )'"]
+    environment:
+      HYDRORISK_DB_HOST: db
+      HYDRORISK_DB_PORT: "5432"
+      HYDRORISK_DB_USER: ${DB_USER:-postgres}
+      HYDRORISK_DB_NAME: ${DB_NAME:-hydrorisk}
+      PSWD_DB: ${POSTGRES_PASSWORD}
+      HYDRORISK_API: "false"
+      VOLUME_MOUNT: /mnt/output
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    volumes:
+      - ../volume/daemon-data:/mnt/output
+    networks:
+      - hydrorisk-net
+    depends_on:
+      db:
+        condition: service_healthy
+    profiles: ["daemon"]

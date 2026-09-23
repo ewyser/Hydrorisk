@@ -1,4 +1,0 @@
-shipping/
-.context/packages/**/.git/
-.context/packages/**/dump/
-**/.DS_Store

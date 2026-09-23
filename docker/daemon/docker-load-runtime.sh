@@ -8,7 +8,7 @@
 
 set -e
 
-IMAGE_NAME="ubuntu-corium"
+IMAGE_NAME="daemon"
 STAGE="runtime"
 IMAGE_TAG="${IMAGE_NAME}:${STAGE}"
 

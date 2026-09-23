@@ -139,9 +139,13 @@ ENV CORIUM_CUDA_VERSION=${CUDA_VERSION}
 
 # Install runtime dependencies only. openssh-client provides `ssh`, which
 # OpenMPI's default process launcher (plm_rsh_agent) needs even for
-# same-node/single-container multi-rank runs.
+# same-node/single-container multi-rank runs. libsqlite3-0 is required by
+# GDAL_jll's bundled libproj.so, which links against sqlite3 for its
+# projection database - without it, precompiling GDAL/ArchGDAL (pulled in by
+# OsmotiC's Datastore.jl path-dep) fails with "libsqlite3.so.0: cannot open
+# shared object file".
 RUN apt-get update && apt-get install -y \
-    libnuma1 libhwloc15 libevent-2.1-7 openssh-client \
+    libnuma1 libhwloc15 libevent-2.1-7 openssh-client libsqlite3-0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user

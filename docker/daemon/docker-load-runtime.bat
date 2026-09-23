@@ -16,7 +16,7 @@ setlocal enabledelayedexpansion
 echo [docker-load-runtime.bat rev 2026-09-09c]
 echo(
 
-set "IMAGE_NAME=ubuntu-corium"
+set "IMAGE_NAME=daemon"
 set "STAGE=runtime"
 set "IMAGE_TAG=%IMAGE_NAME%:%STAGE%"
 

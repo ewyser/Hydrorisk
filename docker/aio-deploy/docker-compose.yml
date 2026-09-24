@@ -36,18 +36,30 @@ services:
     container_name: hydrorisk-db
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in docker/aio-deploy/.env}
+      # Same database name api/daemon use - Datastore's bootstrap and the
+      # first-start seed (seed-db.sh) both target it.
+      HYDRORISK_DB_NAME: ${DB_NAME:-hydrorisk}
     ports:
       - "${DB_HOST_PORT:-5433}:5432"
     volumes:
       - ../volume/db-data:/var/lib/postgresql/data
+      # Only read on the very first start with an empty db-data: if
+      # hydrorisk.sql is here, it becomes the initial database (see
+      # docker/container/db/seed-db.sh). deploy.sh can write it.
+      - ../volume/db-seed:/seed:ro
     networks:
       - hydrorisk-net
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      # -h localhost (TCP), not the default Unix socket: during first-start
+      # init (incl. seeding) Postgres only listens on the socket, so this
+      # keeps db "unhealthy" - and api/daemon waiting - until that's done.
+      test: ["CMD-SHELL", "pg_isready -U postgres -h localhost"]
       interval: 5s
       timeout: 5s
       retries: 20
-      start_period: 10s
+      # Failures don't count during start_period, and the first success
+      # ends it early - generous so restoring a large seed dump fits.
+      start_period: 10m
     restart: unless-stopped
 
   api:

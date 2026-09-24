@@ -4,9 +4,10 @@ set -euo pipefail
 #
 # One-command entry point for the whole stack: makes sure .env exists,
 # loads image tarballs from ./images/ if they aren't already in the local
-# Docker daemon, brings db+api up (and daemon, if asked for), then waits for
-# db to be healthy and api to actually accept connections, and finally
-# offers to import data from a local Postgres via import-local-db-data.sh.
+# Docker daemon, offers to dump the local Postgres into the first-start seed
+# (volume/db-seed/hydrorisk.sql) when volume/db-data is still empty, brings
+# db+api up (and daemon, if asked for), then waits for db to be healthy and
+# api to actually accept connections before returning.
 #
 # Usage: ./deploy.sh [--reload]
 #   --reload   always (re)load every ./images/*.tar, even if images with the
@@ -82,6 +83,35 @@ else
     fi
 fi
 
+# First start on an empty db-data: the db container restores
+# volume/db-seed/hydrorisk.sql, if present, as the initial database before
+# Datastore.jl gets to bootstrap an empty one (see
+# docker/container/db/seed-db.sh). Offer to (re)create that dump from the
+# local Postgres now - before anything starts, so a failing dump (local
+# Postgres down, wrong password) stops here instead of mid-deploy. Once
+# db-data is populated the seed is never read again, so skip all of this.
+DB_DATA_DIR="$SH_DIR/../volume/db-data"
+SEED_FILE="$SH_DIR/../volume/db-seed/hydrorisk.sql"
+if [ -z "$(ls -A "$DB_DATA_DIR" 2>/dev/null)" ]; then
+    echo ""
+    echo "── Database seed ──"
+    echo "volume/db-data is empty - the database will be created on this start."
+    if [ -f "$SEED_FILE" ]; then
+        echo "Existing seed: volume/db-seed/hydrorisk.sql ($(du -h "$SEED_FILE" | cut -f1), $(date -r "$SEED_FILE" '+%Y-%m-%d %H:%M'))"
+        read -p "Refresh it from your local Postgres first? [y/N]: " do_dump
+    else
+        echo "No seed dump found - without one, the database starts empty (no users, clients get 401)."
+        read -p "Dump your local Postgres into volume/db-seed/hydrorisk.sql now? [y/N]: " do_dump
+    fi
+    if [[ "$do_dump" =~ ^[Yy]$ ]]; then
+        "$SH_DIR/import-local-db-data.sh" --dump "$SEED_FILE" || {
+            echo "❌ Dump failed - nothing was started. Is your local Postgres running?" >&2
+            exit 1
+        }
+    fi
+fi
+
+echo ""
 read -p "Also start daemon? (needs a GPU, or falls back to CPU) [y/N]: " with_daemon
 # --pull never: these images only ever come from images/*.tar, never a
 # registry - a missing image should fail as such, not as a confusing
@@ -121,22 +151,20 @@ fi
 echo "✅ Stack is up. API: http://localhost:${API_PORT}/  ·  DB: localhost:${DB_HOST_PORT:-5433}"
 docker compose ps
 
-# A fresh db-data volume only gets Datastore.jl's empty schemas - no users,
-# so every client request is answered 401 until data is imported. Flag that
-# case explicitly before offering the import.
+# Started without a seed (or on an old db-data that never got data), the
+# database only has Datastore.jl's empty schemas - no users, so every client
+# request is answered 401. Say so, with the two ways out.
 DB_NAME_EFFECTIVE="${DB_NAME:-hydrorisk}"
 USER_COUNT=$(docker exec hydrorisk-db psql -U postgres -d "$DB_NAME_EFFECTIVE" -Atc \
     "select count(*) from core.users" 2>/dev/null || echo "?")
-echo ""
 if [ "$USER_COUNT" = "0" ]; then
-    echo "⚠️  Database '$DB_NAME_EFFECTIVE' has no users yet - clients will get 401 Unauthorized until data is imported."
-fi
-read -p "Import data from your local Postgres (import-local-db-data.sh)? [y/N]: " do_import
-if [[ "$do_import" =~ ^[Yy]$ ]]; then
-    # Not fatal: the stack is already up, a failed import (e.g. local
-    # Postgres not running) can just be retried on its own.
-    if ! "$SH_DIR/import-local-db-data.sh" hydrorisk-db "$DB_NAME_EFFECTIVE"; then
-        echo "❌ Import failed - the stack is still running. Fix the cause (is your local Postgres up?) and re-run: $SH_DIR/import-local-db-data.sh" >&2
-        exit 1
+    echo ""
+    echo "⚠️  Database '$DB_NAME_EFFECTIVE' has no users - clients will get 401 Unauthorized."
+    # A failed first-start seed leaves exactly this state (seed-db.sh drops
+    # the half-restored database, Datastore then bootstraps an empty one).
+    if docker logs hydrorisk-db 2>&1 | grep -q "❌ seed-db"; then
+        echo "   The seed restore failed on first start - see: docker compose logs db | grep -B5 seed-db"
     fi
+    echo "   Import into the running db:  $SH_DIR/import-local-db-data.sh"
+    echo "   Or reseed from scratch:      docker compose down, delete volume/db-data, re-run ./deploy.sh"
 fi

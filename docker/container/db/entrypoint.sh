@@ -54,6 +54,17 @@ PG_PID=$!
 trap 'kill -TERM "$PG_PID" 2>/dev/null; wait "$PG_PID"' TERM INT
 
 until pg_isready -U "${POSTGRES_USER:-postgres}" -h localhost -p "${PGPORT:-5432}" >/dev/null 2>&1; do
+    # Postgres died before ever accepting connections (e.g. a failing
+    # initdb.d script such as seed-db.sh): exit with it, instead of polling
+    # forever inside a container that looks "running" but has no server.
+    # Checked via /proc state rather than `kill -0`, which still succeeds
+    # on the zombie an exited, not-yet-reaped child leaves behind.
+    PG_STATE=$(cut -d' ' -f3 "/proc/$PG_PID/stat" 2>/dev/null || echo X)
+    if [ "$PG_STATE" = "Z" ] || [ "$PG_STATE" = "X" ]; then
+        echo "❌ Postgres exited during startup - see the log above." >&2
+        wait "$PG_PID" || exit $?
+        exit 1
+    fi
     sleep 1
 done
 

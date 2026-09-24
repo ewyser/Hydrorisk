@@ -9,8 +9,14 @@ set -euo pipefail
 # straight through `docker exec -i`, so it never touches the host filesystem
 # and never needs the container's 5432 to be free on the host.
 #
+# With --dump FILE it only writes the dump to FILE instead (no container
+# needed) - deploy.sh uses this to produce volume/db-seed/hydrorisk.sql,
+# which a fresh db container restores on its first start (see
+# docker/container/db/seed-db.sh).
+#
 # Usage:
 #   ./import-local-db-data.sh [container] [target_db]
+#   ./import-local-db-data.sh --dump FILE
 #
 # Configure the SOURCE (your local Postgres.app) via env vars:
 #   SRC_HOST (default: localhost)
@@ -25,8 +31,13 @@ set -euo pipefail
 # Example:
 #   SRC_DB=hydrorisk ./import-local-db-data.sh hydrorisk-db hydrorisk
 
-CONTAINER="${1:-hydrorisk-db}"
-TARGET_DB="${2:-hydrorisk}"
+DUMP_FILE=""
+if [ "${1:-}" = "--dump" ]; then
+    DUMP_FILE="${2:?Usage: $0 --dump FILE}"
+else
+    CONTAINER="${1:-hydrorisk-db}"
+    TARGET_DB="${2:-hydrorisk}"
+fi
 
 SRC_HOST="${SRC_HOST:-localhost}"
 SRC_PORT="${SRC_PORT:-5432}"
@@ -40,7 +51,7 @@ if ! command -v pg_dump >/dev/null 2>&1; then
     exit 1
 fi
 
-if ! docker ps --format '{{.Names}}' | grep -qx "$CONTAINER"; then
+if [ -z "$DUMP_FILE" ] && ! docker ps --format '{{.Names}}' | grep -qx "$CONTAINER"; then
     echo "❌ container '$CONTAINER' is not running. Start it first." >&2
     exit 1
 fi
@@ -61,7 +72,6 @@ fi
 # to the container require a password.
 
 echo "→ Dumping '$SRC_DB' from $SRC_HOST:$SRC_PORT (user $SRC_USER)..."
-echo "→ Restoring into '$TARGET_DB' inside container '$CONTAINER' (user $TARGET_USER)..."
 
 # Plain SQL format (-Fp), piped straight into psql, not pg_dump's custom
 # format piped into pg_restore: the custom format embeds a version tag that
@@ -82,9 +92,23 @@ echo "→ Restoring into '$TARGET_DB' inside container '$CONTAINER' (user $TARGE
 #  - `SET transaction_timeout = ...`: a session GUC introduced in Postgres 17.
 # Both are harmless to drop - dump-format/session bookkeeping, not part of
 # the actual schema/data being restored.
-pg_dump -h "$SRC_HOST" -p "$SRC_PORT" -U "$SRC_USER" -d "$SRC_DB" -Fp \
-    --clean --if-exists --no-owner --no-privileges \
-    | sed '/^\\restrict/d; /^\\unrestrict/d; /^SET transaction_timeout/d' \
-    | docker exec -i "$CONTAINER" psql -U "$TARGET_USER" -d "$TARGET_DB" -v ON_ERROR_STOP=1
+dump() {
+    pg_dump -h "$SRC_HOST" -p "$SRC_PORT" -U "$SRC_USER" -d "$SRC_DB" -Fp \
+        --clean --if-exists --no-owner --no-privileges \
+        | sed '/^\\restrict/d; /^\\unrestrict/d; /^SET transaction_timeout/d'
+}
+
+if [ -n "$DUMP_FILE" ]; then
+    # Written to a temp file and only moved into place once complete, so a
+    # failed dump never leaves a truncated seed behind for the db to restore.
+    mkdir -p "$(dirname "$DUMP_FILE")"
+    dump > "$DUMP_FILE.tmp" || { rm -f "$DUMP_FILE.tmp"; exit 1; }
+    mv "$DUMP_FILE.tmp" "$DUMP_FILE"
+    echo "✅ Dump written to $DUMP_FILE."
+    exit 0
+fi
+
+echo "→ Restoring into '$TARGET_DB' inside container '$CONTAINER' (user $TARGET_USER)..."
+dump | docker exec -i "$CONTAINER" psql -U "$TARGET_USER" -d "$TARGET_DB" -v ON_ERROR_STOP=1
 
 echo "✅ Import complete."

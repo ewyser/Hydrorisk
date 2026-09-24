@@ -39,6 +39,11 @@ RUN julia --project=${DATASTORE} -e 'using Pkg; Pkg.instantiate(); Pkg.precompil
 COPY db/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
+# First-start seeding from a mounted dump (/seed/hydrorisk.sql) - see
+# seed-db.sh. Numbered after the base image's own 10_postgis.sh.
+COPY db/seed-db.sh /docker-entrypoint-initdb.d/20_seed_hydrorisk.sh
+RUN chmod +x /docker-entrypoint-initdb.d/20_seed_hydrorisk.sh
+
 EXPOSE 5432
 ENTRYPOINT ["/entrypoint.sh"]
 # Setting ENTRYPOINT resets any CMD inherited from the base image to empty -

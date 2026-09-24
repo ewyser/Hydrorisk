@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-# import-local-data.sh
+# import-local-db-data.sh
 #
 # Dumps a database from your local Postgres (e.g. Postgres.app) and restores
 # it into the running `hydrorisk-db` container - without needing the two
@@ -10,7 +10,7 @@ set -euo pipefail
 # and never needs the container's 5432 to be free on the host.
 #
 # Usage:
-#   ./import-local-data.sh [container] [target_db]
+#   ./import-local-db-data.sh [container] [target_db]
 #
 # Configure the SOURCE (your local Postgres.app) via env vars:
 #   SRC_HOST (default: localhost)
@@ -23,7 +23,7 @@ set -euo pipefail
 #   TARGET_USER (default: postgres)
 #
 # Example:
-#   SRC_DB=hydrorisk ./import-local-data.sh hydrorisk-db hydrorisk
+#   SRC_DB=hydrorisk ./import-local-db-data.sh hydrorisk-db hydrorisk
 
 CONTAINER="${1:-hydrorisk-db}"
 TARGET_DB="${2:-hydrorisk}"

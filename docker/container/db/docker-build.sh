@@ -49,7 +49,7 @@ export DOCKER_BUILDKIT=1
 # Context is docker/ (one level up), not this directory alone - Dockerfile
 # COPYs the shared docker/unix/install/julia.sh directly (no per-service
 # sync copy needed) alongside this service's own db/.context/packages/ and
-# db/unix/entrypoint.sh, both prefixed accordingly in the Dockerfile's COPY
+# db/entrypoint.sh, both prefixed accordingly in the Dockerfile's COPY
 # instructions.
 echo "Building Docker image '$IMAGE_NAME'..."
 # "${arr[@]+"${arr[@]}"}" (not just "${arr[@]}") because macOS's default
@@ -62,6 +62,6 @@ docker save -o "$IMAGE_TAR" "$IMAGE_NAME:latest"
 
 echo ""
 echo "✅ Ready: $IMAGE_TAR"
-echo "   docker/aio-deploy/load-images.sh loads it, then docker compose up -d."
+echo "   docker/aio-deploy/deploy.sh --reload loads it and starts the stack."
 echo "   For a one-off data import from a local Postgres, see"
-echo "   docker/aio-deploy/import-local-data.sh."
+echo "   docker/aio-deploy/import-local-db-data.sh."

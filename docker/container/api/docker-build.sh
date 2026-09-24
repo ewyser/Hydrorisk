@@ -52,7 +52,7 @@ export DOCKER_BUILDKIT=1
 # build already produces it. Context is docker/ (one level up), not this
 # directory alone - Dockerfile COPYs the shared docker/unix/install/*.sh
 # directly (no per-service sync copy needed) alongside this service's own
-# api/.context/packages/ and api/unix/entrypoint.sh, both prefixed
+# api/.context/packages/ and api/entrypoint.sh, both prefixed
 # accordingly in the Dockerfile's COPY instructions.
 echo "Building Docker image '$IMAGE_NAME'..."
 # "${arr[@]+"${arr[@]}"}" (not just "${arr[@]}") because macOS's default
@@ -65,4 +65,4 @@ docker save -o "$IMAGE_TAR" "$IMAGE_NAME:latest"
 
 echo ""
 echo "✅ Ready: $IMAGE_TAR"
-echo "   docker/aio-deploy/load-images.sh loads it, then docker compose up -d."
+echo "   docker/aio-deploy/deploy.sh --reload loads it and starts the stack."

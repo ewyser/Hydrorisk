@@ -97,7 +97,7 @@ RUN julia --project=${OSMOTIC} -e 'using Pkg; Pkg.instantiate(); Pkg.add("CUDA")
 #
 # MPI/CUDA (LocalPreferences.toml) is intentionally NOT configured here: this
 # build stage has no GPU access to verify against. It's regenerated every
-# container start instead, by unix/entrypoint.sh (see
+# container start instead, by entrypoint.sh (see
 # src/boot/needs/setup_mpi.jl).
 FROM deps AS builder
 CMD ["bash"]
@@ -171,8 +171,8 @@ COPY --from=builder ${CUDA_ROOT} ${CUDA_ROOT}
 COPY --from=builder /root/.julia /home/mpiuser/.julia
 
 # Entrypoint: regenerates LocalPreferences.toml (MPI/CUDA config) on every
-# container start - see unix/entrypoint.sh and src/boot/needs/setup_mpi.jl
-COPY daemon/unix/entrypoint.sh /home/mpiuser/entrypoint.sh
+# container start - see entrypoint.sh and src/boot/needs/setup_mpi.jl
+COPY daemon/entrypoint.sh /home/mpiuser/entrypoint.sh
 RUN chmod +x /home/mpiuser/entrypoint.sh
 
 # Fix ownership

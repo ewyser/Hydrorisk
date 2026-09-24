@@ -72,7 +72,7 @@ COPY --from=builder /opt/julia /opt/julia
 COPY --from=builder /home/packages /home/apiuser/packages
 COPY --from=builder /root/.julia /home/apiuser/.julia
 
-COPY api/unix/entrypoint.sh /home/apiuser/entrypoint.sh
+COPY api/entrypoint.sh /home/apiuser/entrypoint.sh
 RUN chmod +x /home/apiuser/entrypoint.sh && \
     chown -R apiuser:apiuser /opt /home/apiuser
 

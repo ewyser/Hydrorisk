@@ -6,8 +6,8 @@
 #
 # Copy .env.example to .env (in this same directory) and fill it in before
 # running. Image tarballs built by each service's docker-build.sh land in
-# ./images/ - load them into the local Docker daemon first if they aren't
-# already there (a fresh/target machine): ./load-images.sh
+# ./images/ - ./deploy.sh loads them into the local Docker daemon if they
+# aren't already there (./deploy.sh --reload forces it), then starts the stack.
 #
 #   docker compose up -d              # db + api only
 #   docker compose --profile daemon up -d daemon   # + daemon

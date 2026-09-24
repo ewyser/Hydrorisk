@@ -32,11 +32,11 @@ COPY db/.context/packages/ ${PKGROOT}/
 RUN julia --project=${DATASTORE} -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
 
 # No POSTGRES_DB/POSTGRES_USER/HYDRORISK_* defaults here - see
-# unix/entrypoint.sh, which derives Datastore.jl's env vars from whatever
+# entrypoint.sh, which derives Datastore.jl's env vars from whatever
 # Postgres config was actually passed to `docker run`, rather than
 # duplicating fixed values here that would go stale the moment someone
 # overrides POSTGRES_DB/POSTGRES_USER.
-COPY db/unix/entrypoint.sh /entrypoint.sh
+COPY db/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 EXPOSE 5432

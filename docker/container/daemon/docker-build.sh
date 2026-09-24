@@ -31,7 +31,7 @@ trap 'rm -rf "$SH_DIR/.context"' EXIT
 # Context is docker/ (one level up), not this directory alone - Dockerfile
 # COPYs the shared docker/unix/install/{julia,hdf5,openmpi}.sh directly (no
 # per-service sync copy needed) alongside this service's own
-# daemon/.context/packages/ and daemon/unix/entrypoint.sh, both prefixed
+# daemon/.context/packages/ and daemon/entrypoint.sh, both prefixed
 # accordingly in the Dockerfile's COPY instructions.
 BUILD_CTXT="$SH_DIR/.."
 DOCKER_DIR="$SH_DIR"
@@ -98,8 +98,8 @@ if [ "$STAGE" = "runtime" ]; then
     docker save -o "$IMAGE_TAR" "$IMAGE_NAME:$STAGE"
     echo ""
     echo "✅ Ready: $IMAGE_TAR"
-    echo "   docker/aio-deploy/load-images.sh loads it, then"
-    echo "   docker compose --profile daemon up -d daemon."
+    echo "   docker/aio-deploy/deploy.sh --reload loads it and starts the"
+    echo "   stack (answer y to start the daemon)."
 else
     echo ""
     echo "✅ Built ${IMAGE_NAME}:${STAGE} (local image only, not saved as a tarball)."

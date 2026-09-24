@@ -28,7 +28,7 @@ INCLUDES=(
 )
 # NOTE: Datastore.jl/env/ (a local, git-ignored db-config.toml holding the DB
 # password) is deliberately NOT staged - the image carries no DB credentials.
-# They are supplied at container start instead (see unix/entrypoint.sh).
+# They are supplied at container start instead (see entrypoint.sh).
 EXCLUDES=(
     --exclude=".git/"
     --exclude=".github/"

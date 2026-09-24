@@ -30,6 +30,16 @@ networks:
   hydrorisk-net:
     driver: bridge
 
+volumes:
+  # Postgres's data directory, as a Docker-managed volume (full name
+  # hydrorisk_db-data), not a host bind mount: on Docker Desktop for
+  # Windows a host-folder PGDATA fails Postgres's ownership/permission
+  # checks, and a live PGDATA inside a synced folder (e.g. Dropbox) risks
+  # corruption. Data moves between machines as a dump instead - see
+  # docker/seed/make-seed.sh and the ../seed mount below.
+  # Reset: docker compose down && docker volume rm hydrorisk_db-data
+  db-data:
+
 services:
   db:
     image: hydrorisk-db:latest
@@ -42,11 +52,11 @@ services:
     ports:
       - "${DB_HOST_PORT:-5433}:5432"
     volumes:
-      - ../volume/db-data:/var/lib/postgresql/data
-      # Only read on the very first start with an empty db-data: if
-      # hydrorisk.sql is here, it becomes the initial database (see
-      # docker/container/db/seed-db.sh). deploy.sh can write it.
-      - ../volume/db-seed:/seed:ro
+      - db-data:/var/lib/postgresql/data
+      # Only read on the very first start with a new (empty) db-data
+      # volume: if hydrorisk.sql is here, it becomes the initial database
+      # (see docker/container/db/seed-db.sh). deploy.sh can write it.
+      - ../seed:/seed:ro
     networks:
       - hydrorisk-net
     healthcheck:
@@ -126,4 +136,11 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    # daemon(;)'s live status display redraws a full block every tick via
+    # ANSI cursor codes (OsmotiC.jl/src/api/daemon.jl) - without a TTY each
+    # redraw is appended to the log instead, so cap it (~30 MB max).
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
     profiles: ["daemon"]

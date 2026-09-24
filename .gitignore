@@ -7,3 +7,7 @@ volume/*
 *.tar
 
 volume/
+
+# Seed dumps hold real data (incl. user records) - never commit them.
+docker/seed/*
+!docker/seed/make-seed.*

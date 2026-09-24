@@ -1,0 +1,10 @@
+# Line endings are part of what makes these scripts run, so pin them
+# instead of leaving them to each machine's core.autocrlf:
+# - .sh/Dockerfile: run by bash inside Linux containers (or copied into
+#   images) - CRLF there breaks them ("bad interpreter", "\r: command not found").
+# - .bat/.ps1: run by Windows cmd/PowerShell - checked out as CRLF everywhere,
+#   so a docker/ folder copied straight from a Mac/Linux checkout still works.
+*.sh        text eol=lf
+Dockerfile  text eol=lf
+*.bat       text eol=crlf
+*.ps1       text eol=crlf

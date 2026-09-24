@@ -91,9 +91,9 @@ if ($args[0] -eq '--from-local') {
     } finally { $ErrorActionPreference = $prev }
     if ($LASTEXITCODE -ne 0) { Fail 'pg_dump failed - is your local Postgres running?' }
 } else {
-    # Same database name the stack uses (DB_NAME in aio-deploy\.env).
+    # Same database name the stack uses (DB_NAME in deploy\.env).
     $dbName = 'hydrorisk'
-    $envFile = Join-Path $PSScriptRoot '..\aio-deploy\.env'
+    $envFile = Join-Path $PSScriptRoot '..\deploy\.env'
     if (Test-Path -LiteralPath $envFile) {
         foreach ($line in Get-Content -LiteralPath $envFile) {
             if ($line -match '^\s*DB_NAME\s*=\s*(.*?)\s*$' -and $Matches[1]) { $dbName = $Matches[1].Trim('"', "'") }
@@ -102,7 +102,7 @@ if ($args[0] -eq '--from-local') {
 
     $running = Get-NativeOutput { docker ps --format '{{.Names}}' }
     if (-not (($running -split "`r?`n") -contains 'hydrorisk-db')) {
-        Fail 'hydrorisk-db is not running - start the stack first (aio-deploy\deploy.bat).'
+        Fail 'hydrorisk-db is not running - start the stack first (deploy\deploy.bat).'
     }
 
     # pg_dump runs inside the db container (version always matches the

@@ -3,13 +3,13 @@ set -euo pipefail
 # docker-build.sh
 #
 # Builds the hydrorisk-db image (Postgres + PostGIS + Datastore.jl) and
-# saves it into ../../aio-deploy/images/ - docker-compose.yml is the only
-# supported way to actually run it (see docker/aio-deploy/).
+# saves it into ../../deploy/images/ - docker-compose.yml is the only
+# supported way to actually run it (see docker/deploy/).
 
 SH_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 IMAGE_NAME="hydrorisk-db"
-AIO_IMAGES_DIR="$SH_DIR/../../aio-deploy/images"
-IMAGE_TAR="$AIO_IMAGES_DIR/${IMAGE_NAME}.tar"
+DEPLOY_IMAGES_DIR="$SH_DIR/../../deploy/images"
+IMAGE_TAR="$DEPLOY_IMAGES_DIR/${IMAGE_NAME}.tar"
 
 # prep-context.sh stages Datastore.jl into .context/packages/ before
 # building; always tear it down again, however the script ends.
@@ -23,7 +23,7 @@ if [ ! -f "$SH_DIR/.context/packages/Datastore.jl/Project.toml" ]; then
     exit 1
 fi
 
-mkdir -p "$AIO_IMAGES_DIR"
+mkdir -p "$DEPLOY_IMAGES_DIR"
 if [ -f "$IMAGE_TAR" ]; then
     echo "Image tarball already exists at: $IMAGE_TAR"
     read -p "Delete it and continue? (y/N): " confirm
@@ -62,6 +62,6 @@ docker save -o "$IMAGE_TAR" "$IMAGE_NAME:latest"
 
 echo ""
 echo "✅ Ready: $IMAGE_TAR"
-echo "   docker/aio-deploy/deploy.sh --reload loads it and starts the stack."
+echo "   docker/deploy/deploy.sh --reload loads it and starts the stack."
 echo "   Its first start restores docker/seed/hydrorisk.sql, if present"
 echo "   (see docker/seed/make-seed.sh)."

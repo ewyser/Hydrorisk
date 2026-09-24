@@ -60,12 +60,12 @@ case "$1" in
             --no-owner --no-privileges -f "$TMP_FILE"
         ;;
     --from-stack)
-        # Same database name the stack uses (DB_NAME in aio-deploy/.env).
-        DB_NAME=$(sed -n 's/^DB_NAME=//p' "$SH_DIR/../aio-deploy/.env" 2>/dev/null | tail -n1 | tr -d "\"'")
+        # Same database name the stack uses (DB_NAME in deploy/.env).
+        DB_NAME=$(sed -n 's/^DB_NAME=//p' "$SH_DIR/../deploy/.env" 2>/dev/null | tail -n1 | tr -d "\"'")
         DB_NAME="${DB_NAME:-hydrorisk}"
 
         if ! docker ps --format '{{.Names}}' | grep -qx hydrorisk-db; then
-            echo "❌ hydrorisk-db is not running - start the stack first (aio-deploy/deploy.sh)." >&2
+            echo "❌ hydrorisk-db is not running - start the stack first (deploy/deploy.sh)." >&2
             exit 1
         fi
 

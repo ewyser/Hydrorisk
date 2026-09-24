@@ -1,6 +1,6 @@
 # Shared context root (docker/container/) for all three services' builds -
 # patterns here are relative to this directory, not to each service's own
-# subdirectory. volume/ and aio-deploy/ live outside this context entirely
+# subdirectory. volume/ and deploy/ live outside this context entirely
 # (one level up, at docker/) so they never need excluding here.
 api/.context/packages/**/.git/
 db/.context/packages/**/.git/

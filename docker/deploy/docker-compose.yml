@@ -45,7 +45,7 @@ services:
     image: hydrorisk-db:latest
     container_name: hydrorisk-db
     environment:
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in docker/aio-deploy/.env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in docker/deploy/.env}
       # Same database name api/daemon use - Datastore's bootstrap and the
       # first-start seed (seed-db.sh) both target it.
       HYDRORISK_DB_NAME: ${DB_NAME:-hydrorisk}

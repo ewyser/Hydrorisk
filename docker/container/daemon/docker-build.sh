@@ -38,14 +38,14 @@ DOCKER_DIR="$SH_DIR"
 IMAGE_NAME="hydrorisk-daemon"
 
 # Only the `runtime` stage is ever actually run (via docker-compose.yml,
-# see docker/aio-deploy/) - it's the only one saved as a tarball, into the
-# centralized ../aio-deploy/images/. `builder`/`deps` stay local-image-only,
+# see docker/deploy/) - it's the only one saved as a tarball, into the
+# centralized ../deploy/images/. `builder`/`deps` stay local-image-only,
 # for debugging Pkg.instantiate/add or the pre-precompile layer in isolation.
-AIO_IMAGES_DIR="$SH_DIR/../../aio-deploy/images"
-IMAGE_TAR="$AIO_IMAGES_DIR/${IMAGE_NAME}-${STAGE}.tar"
+DEPLOY_IMAGES_DIR="$SH_DIR/../../deploy/images"
+IMAGE_TAR="$DEPLOY_IMAGES_DIR/${IMAGE_NAME}-${STAGE}.tar"
 
 if [ "$STAGE" = "runtime" ]; then
-    mkdir -p "$AIO_IMAGES_DIR"
+    mkdir -p "$DEPLOY_IMAGES_DIR"
     if [ -f "$IMAGE_TAR" ]; then
         echo "Image tarball already exists at: $IMAGE_TAR"
         read -p "Delete it and continue? (y/N): " confirm
@@ -98,7 +98,7 @@ if [ "$STAGE" = "runtime" ]; then
     docker save -o "$IMAGE_TAR" "$IMAGE_NAME:$STAGE"
     echo ""
     echo "✅ Ready: $IMAGE_TAR"
-    echo "   docker/aio-deploy/deploy.sh --reload loads it and starts the"
+    echo "   docker/deploy/deploy.sh --reload loads it and starts the"
     echo "   stack (answer y to start the daemon)."
 else
     echo ""

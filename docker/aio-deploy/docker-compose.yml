@@ -70,7 +70,7 @@ services:
     restart: unless-stopped
 
   daemon:
-    image: daemon:runtime
+    image: hydrorisk-daemon:runtime
     container_name: hydrorisk-daemon
     # The image's own CMD is an idle `bash` for interactive use
     # (docker run -it ... bash) - under compose there's no TTY/open stdin,

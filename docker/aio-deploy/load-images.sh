@@ -4,7 +4,8 @@ set -euo pipefail
 #
 # Loads every image tarball in ./images/ into the local Docker daemon, so
 # docker-compose.yml's `image:` references (hydrorisk-db:latest,
-# hydrorisk-api:latest, daemon:runtime) resolve without a `build:` step.
+# hydrorisk-api:latest, hydrorisk-daemon:runtime) resolve without a
+# `build:` step.
 #
 # Needed whenever this directory (aio-deploy/) was copied to a machine that
 # didn't build the images itself - on the machine that ran each service's

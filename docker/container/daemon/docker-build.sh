@@ -35,7 +35,7 @@ trap 'rm -rf "$SH_DIR/.context"' EXIT
 # accordingly in the Dockerfile's COPY instructions.
 BUILD_CTXT="$SH_DIR/.."
 DOCKER_DIR="$SH_DIR"
-IMAGE_NAME="daemon"
+IMAGE_NAME="hydrorisk-daemon"
 
 # Only the `runtime` stage is ever actually run (via docker-compose.yml,
 # see docker/aio-deploy/) - it's the only one saved as a tarball, into the

@@ -29,7 +29,7 @@ set +a
 # Only load from images/*.tar if at least one of the three images isn't
 # already present locally - on the machine that built them, this is a no-op.
 NEED_LOAD=0
-for img in hydrorisk-db:latest hydrorisk-api:latest daemon:runtime; do
+for img in hydrorisk-db:latest hydrorisk-api:latest hydrorisk-daemon:runtime; do
     docker image inspect "$img" >/dev/null 2>&1 || NEED_LOAD=1
 done
 if [ "$NEED_LOAD" -eq 1 ]; then

@@ -38,6 +38,29 @@ usage() {
 
 trap 'rm -f "$TMP_FILE"' EXIT
 
+# True when running inside WSL, i.e. launched from Windows (make-seed.bat).
+is_wsl() {
+    grep -qi microsoft /proc/version 2>/dev/null
+}
+
+# Finds pg_dump. Under WSL, the *Windows* pg_dump.exe comes first: the
+# "local Postgres" is then a Windows service, and under WSL 2 "localhost"
+# means WSL itself, not Windows - a Windows binary connects from the Windows
+# side, where localhost is right. Found on the Windows PATH (which WSL
+# appends to its own by default), or else in the newest EnterpriseDB install
+# under Program Files (that installer doesn't add itself to PATH).
+find_pg_dump() {
+    if is_wsl; then
+        if command -v pg_dump.exe >/dev/null 2>&1; then
+            command -v pg_dump.exe; return
+        fi
+        local c
+        c=$(ls -d /mnt/c/Program\ Files/PostgreSQL/*/bin/pg_dump.exe 2>/dev/null | sort -V | tail -n1)
+        if [ -n "$c" ]; then echo "$c"; return; fi
+    fi
+    command -v pg_dump 2>/dev/null || true
+}
+
 case "$1" in
     --from-local)
         SRC_HOST="${SRC_HOST:-localhost}"
@@ -45,8 +68,9 @@ case "$1" in
         SRC_USER="${SRC_USER:-postgres}"
         SRC_DB="${SRC_DB:-hydrorisk}"
 
-        if ! command -v pg_dump >/dev/null 2>&1; then
-            echo "❌ pg_dump not found - install Postgres client tools (Postgres.app bundles them: add its bin/ to PATH)." >&2
+        PG_DUMP=$(find_pg_dump)
+        if [ -z "$PG_DUMP" ]; then
+            echo "❌ pg_dump not found - install Postgres client tools (Postgres.app bundles them: add its bin/ to PATH; on Windows, add PostgreSQL's bin\\ folder to PATH)." >&2
             exit 1
         fi
         if [ -z "${PGPASSWORD:-}" ]; then
@@ -55,17 +79,29 @@ case "$1" in
             export PGPASSWORD
         fi
 
+        OUT_FILE="$TMP_FILE"
+        if [[ "$PG_DUMP" == *.exe ]]; then
+            # A Windows binary: gets env vars only through WSLENV, and needs
+            # a Windows path for its output file.
+            export WSLENV="PGPASSWORD${WSLENV:+:$WSLENV}"
+            OUT_FILE=$(wslpath -w "$TMP_FILE")
+        fi
+
         echo "→ Dumping '$SRC_DB' from $SRC_HOST:$SRC_PORT (user $SRC_USER)..."
-        pg_dump -h "$SRC_HOST" -p "$SRC_PORT" -U "$SRC_USER" -d "$SRC_DB" -Fp \
-            --no-owner --no-privileges -f "$TMP_FILE"
+        if ! "$PG_DUMP" -h "$SRC_HOST" -p "$SRC_PORT" -U "$SRC_USER" -d "$SRC_DB" -Fp \
+            --no-owner --no-privileges -f "$OUT_FILE"; then
+            echo "❌ pg_dump failed - is your local Postgres running?" >&2
+            exit 1
+        fi
         ;;
     --from-stack)
         # Same database name the stack uses (DB_NAME in deploy/.env).
-        DB_NAME=$(sed -n 's/^DB_NAME=//p' "$SH_DIR/../deploy/.env" 2>/dev/null | tail -n1 | tr -d "\"'")
+        # (\r stripped too: a .env edited in Windows Notepad has CRLF endings.)
+        DB_NAME=$(sed -n 's/^DB_NAME=//p' "$SH_DIR/../deploy/.env" 2>/dev/null | tail -n1 | tr -d "\"'\r")
         DB_NAME="${DB_NAME:-hydrorisk}"
 
         if ! docker ps --format '{{.Names}}' | grep -qx hydrorisk-db; then
-            echo "❌ hydrorisk-db is not running - start the stack first (deploy/deploy.sh)." >&2
+            echo "❌ hydrorisk-db is not running - start the stack first (deploy/deploy.sh, or deploy.bat)." >&2
             exit 1
         fi
 

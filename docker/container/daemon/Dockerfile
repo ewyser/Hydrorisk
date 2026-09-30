@@ -101,10 +101,8 @@ RUN julia --project=${OSMOTIC} -e 'using Pkg; Pkg.instantiate(); Pkg.add("CUDA")
 # precompiles fresh as mpiuser instead, into mpiuser's own depot with correct
 # paths from the start.
 #
-# MPI/CUDA (LocalPreferences.toml) is intentionally NOT configured here: this
-# build stage has no GPU access to verify against. It's regenerated every
-# container start instead, by entrypoint.sh (see
-# src/boot/needs/setup_mpi.jl).
+# MPI/HDF5/CUDA preferences (LocalPreferences.toml) are baked in the runtime
+# stage, right before its precompile - see bake-prefs.jl.
 FROM deps AS builder
 CMD ["bash"]
 
@@ -130,9 +128,9 @@ ENV HOME=/home/mpiuser
 # harmless, but noisy.
 ENV OMPI_MCA_opal_warn_on_missing_libcuda=0
 
-# MPI/CUDA/HDF5 configuration, regenerated at container start by entrypoint.sh
-# (see src/boot/needs/setup_mpi.jl) rather than baked in at build time.
-# CORIUM_HDF5_LIB/CORIUM_HDF5_HL_LIB point HDF5.jl at this system parallel HDF5
+# MPI/CUDA/HDF5 configuration, baked into $CORIUM/LocalPreferences.toml at
+# build time by bake-prefs.jl (below) - all fixed paths/versions of this image,
+# no GPU needed. CORIUM_HDF5_LIB/CORIUM_HDF5_HL_LIB point HDF5.jl at this system parallel HDF5
 # (built against the same system OpenMPI above) instead of HDF5_jll's bundled
 # MPI-enabled artifact, which pulls in a *different* OpenMPI_jll binary that
 # collides with the system one on LD_LIBRARY_PATH (dlopen "undefined symbol:
@@ -142,6 +140,20 @@ ENV CORIUM_HDF5_LIB=${HDF5_PREFIX}/lib/libhdf5.so
 ENV CORIUM_HDF5_HL_LIB=${HDF5_PREFIX}/lib/libhdf5_hl.so
 ARG CUDA_VERSION=12.5
 ENV CORIUM_CUDA_VERSION=${CUDA_VERSION}
+# Baked preferences differ per project (see bake-prefs.jl):
+#   --project=$CORIUM   MPI (system OpenMPI) + HDF5 (system parallel) + CUDA
+#   --project=$OSMOTIC  CUDA only
+# OsmotiC (the daemon) needs CUDA - it runs cORIUm on the GPU in-process - but
+# must keep the default MPI/HDF5: it never calls MPI.Init, and it pulls in
+# GDAL_jll, whose single Linux build links MPICH's libmpi.so.12 and so only
+# loads alongside the default (MPICH) MPI jlls. The system-OpenMPI preferences
+# (e.g. via stacking $CORIUM on JULIA_LOAD_PATH) break its precompile with
+# "libmpi.so.12: cannot open shared object file".
+# Build the precompile cache for several x86-64 generations (the same targets
+# as the official Julia binary's sysimage), not just the build machine's CPU.
+# Otherwise a deployment host with a different CPU rejects the whole cache and
+# recompiles everything at first `using`.
+ENV JULIA_CPU_TARGET="generic;sandybridge,-xsaveopt,clone_all;haswell,-rdrnd,base(1)"
 
 # Install runtime dependencies only. openssh-client provides `ssh`, which
 # OpenMPI's default process launcher (plm_rsh_agent) needs even for
@@ -176,13 +188,13 @@ COPY --from=builder ${CUDA_ROOT} ${CUDA_ROOT}
 # installed, but nothing here actually is.
 COPY --from=builder /root/.julia /home/mpiuser/.julia
 
-# Entrypoint: regenerates LocalPreferences.toml (MPI/CUDA config) on every
-# container start - see entrypoint.sh and src/boot/needs/setup_mpi.jl
+# Entrypoint: output-mount permissions, DB config, privilege drop
 COPY daemon/entrypoint.sh /home/mpiuser/entrypoint.sh
 RUN chmod +x /home/mpiuser/entrypoint.sh
+COPY daemon/bake-prefs.jl /home/mpiuser/bake-prefs.jl
 
 # Fix ownership
-RUN chown -R mpiuser:mpiuser /opt ${CUDA_ROOT} /home/mpiuser/packages /home/mpiuser/.julia /home/mpiuser/entrypoint.sh
+RUN chown -R mpiuser:mpiuser /opt ${CUDA_ROOT} /home/mpiuser/packages /home/mpiuser/.julia /home/mpiuser/entrypoint.sh /home/mpiuser/bake-prefs.jl
 
 # NOTE: the container deliberately starts as root so entrypoint.sh can make a
 # bind-mounted $VOLUME_MOUNT writable before dropping to mpiuser (via `runuser`)
@@ -198,6 +210,12 @@ WORKDIR ${CORIUM}
 # with EACCES. The first `using cORIUm` / `using OsmotiC` inside a delivered
 # container is then fast instead of a ~10+ min cold precompile. No GPU is needed
 # for this - CUDA.jl precompiles fine without one.
+#
+# Preferences are baked FIRST: they are compile-time preferences, so the cache
+# must be built against the exact values the container runs with, or every
+# start recompiles (and CUDA's in-process recompile fails - see bake-prefs.jl).
+RUN runuser -u mpiuser -- julia --project=${CORIUM}  /home/mpiuser/bake-prefs.jl
+RUN runuser -u mpiuser -- julia --project=${OSMOTIC} /home/mpiuser/bake-prefs.jl --cuda-only
 RUN runuser -u mpiuser -- julia --project=${CORIUM}  -e 'using Pkg; Pkg.precompile()'
 RUN runuser -u mpiuser -- julia --project=${OSMOTIC} -e 'using Pkg; Pkg.precompile()'
 

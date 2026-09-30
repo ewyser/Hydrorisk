@@ -85,33 +85,23 @@ if [ -f "$ENV_FILE" ]; then
     _set_missing HYDRORISK_API     api
 fi
 
-# Regenerates LocalPreferences.toml (MPI + CUDA + HDF5 config) on every
-# container start, against whatever GPU/MPI is actually present at that
-# moment, rather than baking it into the image at build time (which would
-# happen in a GPU-less build environment and could never be verified
-# there). Ask first, when there's a TTY to ask on - a container started
-# without one (e.g. a scripted `docker run <image> julia -e '...'`) has
-# no way to answer, so it defaults to yes, matching prior behavior.
+# MPI/CUDA/HDF5 preferences are baked into $CORIUM/LocalPreferences.toml, and
+# the CUDA one also into $OSMOTIC/LocalPreferences.toml, at build time (see
+# bake-prefs.jl) - the precompile cache is built against them, so there's
+# nothing to configure here by default. OsmotiC deliberately keeps the
+# default MPI setup (see the note next to CORIUM_CUDA_VERSION in the
+# Dockerfile).
 #
-# CORIUM_MPIEXEC_PATH / CORIUM_CUDA_VERSION / CORIUM_HDF5_LIB /
-# CORIUM_HDF5_HL_LIB are set as image ENV vars in the Dockerfile, alongside
-# CORIUM and OSMOTIC (the two bundled package project dirs under
-# /home/mpiuser/packages). setup_mpi.jl reconfigures HDF5.jl / MPIPreferences
-# in the shared depot, which OsmotiC.jl inherits - no separate OsmotiC boot
-# step is needed. See
-# src/boot/needs/setup_mpi.jl for the fallback, interactive behavior used
-# when those aren't set (manual/bare-metal use).
-if [ -t 0 ]; then
-    read -r -p "Configure MPI/CUDA/HDF5 automatically now? [Y/n]: " answer || answer="y"
-else
-    answer="y"
-fi
-
-if [[ ! "$answer" =~ ^[Nn]$ ]]; then
-    echo "Configuring MPI/CUDA/HDF5 (see src/boot/needs/setup_mpi.jl)..."
+# Re-running setup_mpi.jl changes compile-time preferences: that invalidates
+# the MPI/HDF5/CUDA caches and forces a long recompile on this start (and
+# in-process CUDA recompiles can fail with "Declaring __precompile__(false) is
+# not allowed..."). Only opt in (CORIUM_RECONFIGURE=1) if the host really
+# needs a different setup than the image's; run it in its own process, and
+# let the first `using` afterwards recompile in a fresh one.
+if [ "${CORIUM_RECONFIGURE:-0}" = "1" ]; then
+    echo "CORIUM_RECONFIGURE=1: reconfiguring MPI/CUDA/HDF5 (see src/boot/needs/setup_mpi.jl)..."
+    echo "   This invalidates the precompile cache - the next 'using cORIUm' will recompile."
     julia --project="${CORIUM}" -e 'include(joinpath(ENV["CORIUM"], "src", "boot", "needs", "setup_mpi.jl"))'
-else
-    echo "Skipping automatic configuration - dropping straight into the image."
 fi
 
 exec "$@"

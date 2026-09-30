@@ -10,19 +10,26 @@
 # differs from) the local Docker daemon (./deploy.sh --reload forces all),
 # then starts the stack.
 #
-#   docker compose up -d              # db + api only
-#   docker compose --profile daemon up -d daemon   # + daemon
+#   docker compose up -d                                  # db + api only
+#   docker compose --profile daemon up -d                 # + daemon on CPU
+#   docker compose --profile daemon-gpu up -d             # + daemon on GPU
+#   docker compose --profile daemon --profile daemon-gpu down   # stop all
 #
-# daemon's GPU access: this file requests none, so it runs on every host.
-# The GPU itself is requested by docker-compose.gpu.yml, which deploy.sh /
-# deploy.ps1 add automatically when the host has a working NVIDIA GPU
-# (`nvidia-smi -L`). That explicit request is what Docker Desktop
-# (Windows/WSL2) needs - the NVIDIA_VISIBLE_DEVICES env var below alone only
-# works on a Linux host whose default runtime was made NVIDIA-aware
-# (nvidia-ctk runtime configure --runtime=docker --set-as-default). Without
-# a GPU, daemon starts normally on CPU (cORIUm.jl's backend selection falls
-# back to CPU when CUDA.functional() is false - see
-# cORIUm.jl/src/boot/needs/backend.jl).
+# daemon comes in two variants with identical settings (the x-daemon block
+# below), both creating the same container, hydrorisk-daemon - run one:
+#   - daemon      (profile "daemon"): requests no GPU, so it runs on every
+#     host; on CPU (cORIUm.jl's backend selection falls back to CPU when
+#     CUDA.functional() is false - see cORIUm.jl/src/boot/needs/backend.jl).
+#   - daemon-gpu  (profile "daemon-gpu"): adds a GPU device request, the
+#     compose form of `docker run --gpus all`. Docker Desktop (Windows/WSL2)
+#     only gives a container the GPU through such a request -
+#     NVIDIA_VISIBLE_DEVICES alone does nothing there. But on a host without
+#     an NVIDIA GPU, Docker refuses to create a container that makes it
+#     ("could not select device driver") - hence two variants instead of
+#     one. deploy.sh / shell.sh pick daemon-gpu when `nvidia-smi -L` works.
+# Refer to the container by name (docker logs/exec hydrorisk-daemon) - that
+# works for either variant. Switching variants on one host: `down` first
+# (they share the container name).
 
 name: hydrorisk
 
@@ -37,21 +44,78 @@ volumes:
   # checks, and a live PGDATA inside a synced folder (e.g. Dropbox) risks
   # corruption. Data moves between machines as a dump instead - see
   # docker/seed/make-seed.sh and the ../seed mount below.
-  # Reset: docker compose down && docker volume rm hydrorisk_db-data
+  # Reset: docker compose --profile daemon --profile daemon-gpu down && docker volume rm hydrorisk_db-data
   db-data:
+
+# daemon's settings, shared by its two variants (services daemon and
+# daemon-gpu below - see the header).
+x-daemon: &daemon
+  image: hydrorisk-daemon:runtime
+  container_name: hydrorisk-daemon
+  # The image's own CMD is an idle `bash` for interactive use
+  # (docker run -it ... bash) - under compose there's no TTY/open stdin,
+  # so that would read EOF immediately and exit right after entrypoint.sh's
+  # MPI/CUDA setup. daemon(self; ) (OsmotiC.jl/src/api/daemon.jl) is the
+  # actual long-running process - it polls the jobs table in db (through
+  # Datastore.jl) and dispatches work to a worker pool, analogous to
+  # api's Hydrorisk.start_server(...). `bash -lc` (not a plain argv list)
+  # so $OSMOTIC - set as an image ENV var in the Dockerfile - expands at
+  # container start.
+  #
+  # Caveat: daemon(;)'s shutdown path only catches InterruptException
+  # (Ctrl+C/SIGINT), not SIGTERM - what `docker stop`/`docker compose
+  # down` actually send. It will still be killed (Docker SIGKILLs after
+  # the stop grace period regardless), just without a clean job-queue/
+  # worker-pool shutdown first. Not fixed here - would need SIGTERM
+  # handling added in OsmotiC.jl itself.
+  #
+  # Output lands on the bind-mounted host volume below ($VOLUME_MOUNT)
+  # without anything wired here: cORIUm puts dump/ there
+  # (resolve_dump_dir in cORIUm.jl/src/home/program/workflow/cORE.jl), and
+  # OsmotiC's __init__ does the same for job/ and logs/ (resolve_sys_dir in
+  # OsmotiC.jl/src/boot/needs/utils.jl) - each falling back to its
+  # in-container default if the mount isn't writable.
+  command: ["bash", "-lc", "julia --project=$$OSMOTIC -e 'using OsmotiC, CUDA; daemon(OsmotiC.self; )'"]
+  environment:
+    HYDRORISK_DB_HOST: db
+    HYDRORISK_DB_PORT: "5432"
+    HYDRORISK_DB_USER: ${DB_USER:-postgres}
+    HYDRORISK_DB_NAME: ${DB_NAME:-hydrorisk}
+    PSWD_DB: ${POSTGRES_PASSWORD}
+    HYDRORISK_API: "false"
+    VOLUME_MOUNT: /mnt/output
+    # Only effective on a Linux host whose default Docker runtime is the
+    # NVIDIA one (nvidia-ctk runtime configure --set-as-default); elsewhere
+    # the GPU comes from daemon-gpu's device request.
+    NVIDIA_VISIBLE_DEVICES: all
+    NVIDIA_DRIVER_CAPABILITIES: compute,utility
+  volumes:
+    - ../volume/daemon-data:/mnt/output
+  networks:
+    - hydrorisk-net
+  depends_on:
+    db:
+      condition: service_healthy
+  # daemon(;)'s live status display redraws a full block every tick via
+  # ANSI cursor codes (OsmotiC.jl/src/api/daemon.jl) - without a TTY each
+  # redraw is appended to the log instead, so cap it (~30 MB max).
+  logging:
+    options:
+      max-size: "10m"
+      max-file: "3"
 
 services:
   db:
     image: hydrorisk-db:latest
     container_name: hydrorisk-db
     environment:
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in docker/deploy/.env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?no database password - run deploy.sh (or deploy.bat), which sets it in docker/deploy/.env}
       # Same database name api/daemon use - Datastore's bootstrap and the
       # first-start seed (seed-db.sh) both target it.
       HYDRORISK_DB_NAME: ${DB_NAME:-hydrorisk}
       # A missing/unreadable seed or failed restore on first start is fatal
       # (see seed-db.sh) rather than silently leaving an empty database -
-      # deploy.sh/deploy.ps1 refuse a first start without a seed anyway.
+      # deploy.sh refuses a first start without a seed anyway.
       SEED_REQUIRED: "1"
     ports:
       - "${DB_HOST_PORT:-5433}:5432"
@@ -98,7 +162,7 @@ services:
       # once the container runs, which is seconds before Julia has loaded
       # Hydrorisk.jl and listens. GET / needs neither db nor auth (unlike
       # /health). bash's /dev/tcp because the runtime image has no
-      # curl/wget. `docker compose up --wait` (deploy.sh/deploy.ps1) shows
+      # curl/wget. `docker compose up --wait` (deploy.sh) shows
       # api as "Waiting" until this passes.
       #
       # Only until the first success: that writes /tmp/.api-up, and every
@@ -115,55 +179,20 @@ services:
       start_period: 5m
     restart: unless-stopped
 
+  # daemon on CPU - runs on every host.
   daemon:
-    image: hydrorisk-daemon:runtime
-    container_name: hydrorisk-daemon
-    # The image's own CMD is an idle `bash` for interactive use
-    # (docker run -it ... bash) - under compose there's no TTY/open stdin,
-    # so that would read EOF immediately and exit right after entrypoint.sh's
-    # MPI/CUDA setup. daemon(self; ) (OsmotiC.jl/src/api/daemon.jl) is the
-    # actual long-running process - it polls the jobs table in db (through
-    # Datastore.jl) and dispatches work to a worker pool, analogous to
-    # api's Hydrorisk.start_server(...). `bash -lc` (not a plain argv list)
-    # so $OSMOTIC - set as an image ENV var in the Dockerfile - expands at
-    # container start.
-    #
-    # Caveat: daemon(;)'s shutdown path only catches InterruptException
-    # (Ctrl+C/SIGINT), not SIGTERM - what `docker stop`/`docker compose
-    # down` actually send. It will still be killed (Docker SIGKILLs after
-    # the stop grace period regardless), just without a clean job-queue/
-    # worker-pool shutdown first. Not fixed here - would need SIGTERM
-    # handling added in OsmotiC.jl itself.
-    #
-    # Output lands on the bind-mounted host volume below ($VOLUME_MOUNT)
-    # without anything wired here: cORIUm puts dump/ there
-    # (resolve_dump_dir in cORIUm.jl/src/home/program/workflow/cORE.jl), and
-    # OsmotiC's __init__ does the same for job/ and logs/ (resolve_sys_dir in
-    # OsmotiC.jl/src/boot/needs/utils.jl) - each falling back to its
-    # in-container default if the mount isn't writable.
-    command: ["bash", "-lc", "julia --project=$$OSMOTIC -e 'using OsmotiC, CUDA; daemon(OsmotiC.self; )'"]
-    environment:
-      HYDRORISK_DB_HOST: db
-      HYDRORISK_DB_PORT: "5432"
-      HYDRORISK_DB_USER: ${DB_USER:-postgres}
-      HYDRORISK_DB_NAME: ${DB_NAME:-hydrorisk}
-      PSWD_DB: ${POSTGRES_PASSWORD}
-      HYDRORISK_API: "false"
-      VOLUME_MOUNT: /mnt/output
-      NVIDIA_VISIBLE_DEVICES: all
-      NVIDIA_DRIVER_CAPABILITIES: compute,utility
-    volumes:
-      - ../volume/daemon-data:/mnt/output
-    networks:
-      - hydrorisk-net
-    depends_on:
-      db:
-        condition: service_healthy
-    # daemon(;)'s live status display redraws a full block every tick via
-    # ANSI cursor codes (OsmotiC.jl/src/api/daemon.jl) - without a TTY each
-    # redraw is appended to the log instead, so cap it (~30 MB max).
-    logging:
-      options:
-        max-size: "10m"
-        max-file: "3"
+    <<: *daemon
     profiles: ["daemon"]
+
+  # daemon with the GPU - only on hosts with a working NVIDIA GPU (see the
+  # header for why this is a separate variant).
+  daemon-gpu:
+    <<: *daemon
+    profiles: ["daemon-gpu"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

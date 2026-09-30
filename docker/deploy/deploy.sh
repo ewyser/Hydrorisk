@@ -344,15 +344,69 @@ fi
 # compose shows it as "Waiting" until then instead of an early "Started".
 COMPOSE_ARGS=(up -d --pull never --wait --wait-timeout 900)
 if [[ "$with_daemon" =~ ^[Yy]$ ]]; then
-    COMPOSE_ARGS=(--profile daemon "${COMPOSE_ARGS[@]}")
-    # Give daemon the GPU (docker-compose.gpu.yml) only when the host has a
-    # working NVIDIA one - requesting it on a host without makes Docker
-    # refuse to create the container.
+    # daemon's GPU variant (daemon-gpu, see docker-compose.yml) only when the
+    # host has a working NVIDIA GPU - requesting one on a host without makes
+    # Docker refuse to create the container.
     if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
-        echo "NVIDIA GPU found - daemon gets GPU access (docker-compose.gpu.yml)."
-        COMPOSE_ARGS=(-f docker-compose.yml -f docker-compose.gpu.yml "${COMPOSE_ARGS[@]}")
+        echo "NVIDIA GPU found - daemon gets GPU access (daemon-gpu)."
+        DAEMON_SERVICE="daemon-gpu"
     else
         echo "No NVIDIA GPU found on this host - daemon runs on CPU."
+        DAEMON_SERVICE="daemon"
+    fi
+    COMPOSE_ARGS=(--profile "$DAEMON_SERVICE" "${COMPOSE_ARGS[@]}")
+    # Both variants create the container hydrorisk-daemon: one left by the
+    # other variant (or by the older single-service layout) would block this
+    # one with "container name already in use". It's the container being
+    # replaced anyway - its output lives in volume/, not in the container.
+    OLD_SERVICE=$(docker inspect -f '{{index .Config.Labels "com.docker.compose.service"}}' hydrorisk-daemon 2>/dev/null || true)
+    if [ -n "$OLD_SERVICE" ] && [ "$OLD_SERVICE" != "$DAEMON_SERVICE" ]; then
+        echo "Replacing the existing hydrorisk-daemon container ($OLD_SERVICE variant)."
+        docker rm -f hydrorisk-daemon >/dev/null
+    fi
+fi
+
+# Existing database: make sure the .env password is the one it actually has
+# (Postgres keeps the password it was created with; editing .env alone
+# doesn't change it, and api/daemon would then fail to log in).
+# Checked over TCP to the container's own address, exactly like api's
+# connection - 127.0.0.1 and the local socket are "trust" in this image, so
+# they'd accept any password. The ALTER USER itself goes over the trusted
+# socket (no old password needed), fed on stdin to keep it out of `ps`.
+db_accepts_password() {
+    docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" hydrorisk-db sh -c \
+        'psql -h "$(hostname -i | cut -d" " -f1)" -U postgres -d postgres -Atc "select 1"' >/dev/null 2>&1
+}
+if [ "$FIRST_START" -eq 0 ]; then
+    echo ""
+    echo "── Database password ──"
+    if ! docker compose up -d --pull never --wait db; then
+        show_seed_log
+        echo "❌ The database container did not start. See: docker compose logs db" >&2
+        exit 1
+    fi
+    if db_accepts_password; then
+        echo "The password in .env matches the database."
+    else
+        echo "⚠️  The database does not accept the password in docker/deploy/.env."
+        echo "   It keeps the password it was created with (or last set to); .env now has a different one."
+        read -r -p "Set the database password to the one in .env? Clients using the old one (QGIS, pgAdmin, ...) will need the new one. [y/N]: " apply_pw
+        if [[ ! "$apply_pw" =~ ^[Yy]$ ]]; then
+            echo "❌ Not changed. Put the database's current password back in docker/deploy/.env (POSTGRES_PASSWORD), then deploy again." >&2
+            exit 1
+        fi
+        if [[ "$POSTGRES_PASSWORD" == *"'"* ]]; then
+            echo "❌ The password in .env contains a single quote (') - choose one without." >&2
+            exit 1
+        fi
+        printf "ALTER USER postgres PASSWORD '%s';\n" "$POSTGRES_PASSWORD" \
+            | docker exec -i hydrorisk-db psql -q -U postgres -d postgres -v ON_ERROR_STOP=1
+        if ! db_accepts_password; then
+            echo "❌ Changing the database password failed. See: docker compose logs db" >&2
+            exit 1
+        fi
+        echo "✅ Database password updated to the one in .env."
+        backup_note
     fi
 fi
 
@@ -407,18 +461,18 @@ if [ "$USER_COUNT" = "0" ] || [ "$USER_COUNT" = "?" ]; then
     if [ -s "$SEED_FILE" ]; then
         read -p "Delete the database volume ($DB_VOLUME) now, to reseed from docker/seed/hydrorisk.sql on the next run? [y/N]: " reset
         if [[ "$reset" =~ ^[Yy]$ ]]; then
-            docker compose --profile daemon down
+            docker compose --profile daemon --profile daemon-gpu down
             docker volume rm "$DB_VOLUME"
             echo "✅ $DB_VOLUME removed - re-run ./deploy.sh to start with the seed."
             exit 0
         fi
     fi
-    echo "   To reseed: docker compose down && docker volume rm $DB_VOLUME, then re-run ./deploy.sh"
+    echo "   To reseed: docker compose --profile daemon --profile daemon-gpu down && docker volume rm $DB_VOLUME, then re-run ./deploy.sh"
 fi
 
 # daemon's entrypoint warns (and keeps output inside the container) when the
 # volume/ mount isn't writable for its user - surface that here.
 if [[ "$with_daemon" =~ ^[Yy]$ ]] && docker logs hydrorisk-daemon 2>&1 | grep -q "not writable by mpiuser"; then
     echo ""
-    echo "⚠️  daemon can't write to $DAEMON_DIR - its output stays inside the container. See: docker compose logs daemon"
+    echo "⚠️  daemon can't write to $DAEMON_DIR - its output stays inside the container. See: docker logs hydrorisk-daemon"
 fi

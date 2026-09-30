@@ -6,24 +6,37 @@
 # shp2pgsql/raster2pgsql/psql client tools Datastore.jl's db_create()/
 # db_add_data() need - Datastore only issues CREATE EXTENSION, it can't
 # install the extension binaries itself.
+
+# Latest 1.10 LTS patch, same as the daemon image. At least 1.10.10:
+# Datastore.jl's [compat] requires julia = "1.10.10".
+ARG JULIA_VERSION=1.10.12
+
+# ------------------------------------------------------
+# Julia is downloaded in its own Ubuntu stage and only copied into the db
+# image below - so the db image needs no apt-get at all. Its base,
+# postgis/postgis:16-3.4, is Debian 11 (bullseye), whose security repo is
+# being retired: apt-get there fails with 404s for packages its own index
+# still lists (e.g. wget). The official Julia binaries are self-contained
+# and run on bullseye's glibc as-is.
+# ------------------------------------------------------
+FROM ubuntu:22.04 AS julia
+ARG JULIA_VERSION
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    wget ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY unix/install/julia.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/julia.sh && \
+    /usr/local/bin/julia.sh "$JULIA_VERSION" /opt/julia
+
+# ------------------------------------------------------
 FROM postgis/postgis:16-3.4
 
-ARG JULIA_VERSION=1.10.5
 ENV JULIA_PREFIX=/opt/julia
 ENV PKGROOT=/home/packages
 ENV DATASTORE=${PKGROOT}/Datastore.jl
 ENV JULIA_PKG_PRECOMPILE_AUTO=no
 
-# ca-certificates is already present in the base image; only wget is needed
-# here. Installing ca-certificates again pulls in a security-repo upgrade
-# that isn't always available for this base's Debian point release.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    wget \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY unix/install/julia.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/julia.sh && \
-    /usr/local/bin/julia.sh "$JULIA_VERSION" "$JULIA_PREFIX"
+COPY --from=julia /opt/julia ${JULIA_PREFIX}
 ENV PATH=${JULIA_PREFIX}/bin:$PATH
 
 # Datastore.jl, staged by prep-context.sh (no sibling packages needed - it

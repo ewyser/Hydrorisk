@@ -7,7 +7,13 @@ FROM nvidia/cuda:12.5.0-devel-ubuntu22.04 AS toolchain
 ARG CUDA_VERSION=12.5
 ARG OPENMPI_VERSION=4.1.6
 ARG HDF5_VERSION=1.14.3
-ARG JULIA_VERSION=1.10.5
+# Latest 1.10 LTS patch, not 1.10.5: Pkg in 1.10.5 falsely reports a circular dependency
+# through Atomix's AtomixCUDAExt (CUDA -> KernelAbstractions -> Atomix ->
+# AtomixCUDAExt -> CUDA) and silently skips precompiling CUDA, cORIUm and
+# OsmotiC - leaving them to compile at container start, where CUDA's
+# in-process compile fails ("__precompile__(false) is not allowed").
+# The Manifests' julia_version = "1.10.5" is fine: same minor version.
+ARG JULIA_VERSION=1.10.12
 
 # Environment variables (for runtime)
 ENV CUDA_ROOT=/usr/local/cuda-${CUDA_VERSION}

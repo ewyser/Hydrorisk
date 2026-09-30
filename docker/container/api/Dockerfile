@@ -4,7 +4,9 @@
 # ------------------------------------------------------
 FROM ubuntu:22.04 AS toolchain
 
-ARG JULIA_VERSION=1.10.5
+# Latest 1.10 LTS patch, same as the daemon image. At least 1.10.10:
+# Datastore.jl's [compat] requires julia = "1.10.10".
+ARG JULIA_VERSION=1.10.12
 ENV DEBIAN_FRONTEND=noninteractive
 ENV JULIA_PREFIX=/opt/julia
 

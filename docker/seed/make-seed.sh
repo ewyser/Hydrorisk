@@ -4,8 +4,8 @@ set -euo pipefail
 #
 # Writes hydrorisk.sql next to this script: the dump a fresh db container
 # restores as its initial database on first start (no hydrorisk_db-data
-# volume yet - see docker/container/db/seed-db.sh). Windows: make-seed.bat /
-# make-seed.ps1 do the same (keep them in sync).
+# volume yet - see docker/container/db/seed-db.sh). Windows: make-seed.bat
+# runs this same script through WSL.
 #
 # Usage: ./make-seed.sh --from-local | --from-stack
 #   --from-local   dump your local Postgres (e.g. Postgres.app). Source is

@@ -18,7 +18,9 @@ set -euo pipefail
 # Deploying never creates the seed - that's a separate, earlier step:
 # docker/seed/make-seed.sh --from-local | --from-stack.
 #
-# Windows: deploy.bat / deploy.ps1 do the same (keep them in sync).
+# Windows: deploy.bat runs this same script through WSL - there is no
+# separate Windows version to keep in sync. Windows-only checks below are
+# guarded by is_wsl.
 #
 # Images themselves aren't built here - each service's own docker-build.sh
 # does that (see docker/container/{db,api,daemon}).

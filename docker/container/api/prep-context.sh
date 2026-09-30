@@ -65,11 +65,18 @@ echo "→ staging Hydrorisk.jl"
 rsync -a --delete "${INCLUDES[@]}" "${EXCLUDES[@]}" "$HYDRORISK_JL_SRC/" "$DEST/wrap/Hydrorisk.jl/"
 
 for pkg in "Datastore.jl" "wrap/Hydrorisk.jl"; do
-    if [ ! -f "$DEST/$pkg/Project.toml" ] || [ ! -f "$DEST/$pkg/Manifest.toml" ]; then
-        echo "❌ $pkg staged without Project.toml/Manifest.toml" >&2
+    if [ ! -f "$DEST/$pkg/Project.toml" ]; then
+        echo "❌ $pkg staged without Project.toml" >&2
         exit 1
     fi
 done
+# Only Hydrorisk.jl is instantiated (see the Dockerfile's deps stage), so only
+# it needs a Manifest. Datastore.jl is resolved through Hydrorisk.jl's Manifest
+# - and its repo gitignores Manifest.toml, so a fresh clone has none.
+if [ ! -f "$DEST/wrap/Hydrorisk.jl/Manifest.toml" ]; then
+    echo "❌ wrap/Hydrorisk.jl staged without Manifest.toml" >&2
+    exit 1
+fi
 
 echo "✅ staged into $DEST:"
 find "$DEST" -maxdepth 2

@@ -32,14 +32,14 @@ WORKDIR ${PKGROOT}
 
 # ------------------------------------------------------
 # STAGE 2: DEPENDENCY RESOLUTION - cached on the staged packages' content
-# alone. Datastore.jl is instantiated first: Hydrorisk.jl's Manifest pins it
-# by relative path (../../Datastore.jl, see prep-context.sh), so the sibling
-# layout staged by prep-context.sh must already be in place before
-# Hydrorisk's own instantiate runs.
+# alone. Only Hydrorisk.jl is instantiated: it's the only project the api
+# runs. Datastore.jl is its path-dep (../../Datastore.jl - the sibling layout
+# staged by prep-context.sh and copied here), and Hydrorisk.jl's Manifest
+# already pins all of Datastore's dependencies, so Datastore needs neither
+# its own instantiate nor its own Manifest.toml (its repo gitignores it).
 # ------------------------------------------------------
 FROM toolchain AS deps
 COPY api/.context/packages/ ${PKGROOT}/
-RUN julia --project=${DATASTORE} -e 'using Pkg; Pkg.instantiate()'
 RUN julia --project=${HYDRORISK} -e 'using Pkg; Pkg.instantiate()'
 
 # ------------------------------------------------------
@@ -85,7 +85,7 @@ RUN chmod +x /home/apiuser/entrypoint.sh && \
 USER apiuser
 WORKDIR ${HYDRORISK}
 
-RUN julia --project=${DATASTORE} -e 'using Pkg; Pkg.precompile()'
+# Precompiles Datastore.jl too, as Hydrorisk.jl's dependency.
 RUN julia --project=${HYDRORISK} -e 'using Pkg; Pkg.precompile()'
 
 EXPOSE 8000

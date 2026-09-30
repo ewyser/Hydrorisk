@@ -69,8 +69,16 @@ for pkg in "${PACKAGES[@]}"; do
     fi
     echo "→ staging $pkg"
     rsync -a --delete "${INCLUDES[@]}" "${EXCLUDES[@]}" "$src/" "$DEST/$pkg/"
-    if [ ! -f "$DEST/$pkg/Project.toml" ] || [ ! -f "$DEST/$pkg/Manifest.toml" ]; then
-        echo "❌ $pkg staged without Project.toml/Manifest.toml" >&2
+    if [ ! -f "$DEST/$pkg/Project.toml" ]; then
+        echo "❌ $pkg staged without Project.toml" >&2
+        exit 1
+    fi
+    # Only the two projects the Dockerfile instantiates need their own
+    # Manifest. Datastore.jl is a path-dep of OsmotiC, resolved entirely from
+    # OsmotiC.jl/Manifest.toml - and its repo gitignores Manifest.toml, so a
+    # fresh clone has none.
+    if [ "$pkg" != "Datastore.jl" ] && [ ! -f "$DEST/$pkg/Manifest.toml" ]; then
+        echo "❌ $pkg staged without Manifest.toml" >&2
         exit 1
     fi
 done

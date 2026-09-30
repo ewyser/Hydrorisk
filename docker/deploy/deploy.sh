@@ -115,9 +115,32 @@ test_docker_mount() {
 }
 
 docker_mount_hint() {
-    echo "   Docker cannot see this folder. If it is on an external drive, check that it's" >&2
-    echo "   shared with Docker (Docker Desktop > Settings > Resources > File sharing), or" >&2
-    echo "   copy the Hydrorisk folder to a local disk and deploy from there." >&2
+    echo "   Docker cannot see this folder. If it is on an external drive: plug it in," >&2
+    if is_wsl; then
+        echo "   restart Docker Desktop (or run \"wsl --shutdown\" in a Windows terminal), then" >&2
+        echo "   run this again - or copy the Hydrorisk folder to a local disk (e.g. C:\\)." >&2
+    else
+        echo "   check that it's shared with Docker (Docker Desktop > Settings > Resources >" >&2
+        echo "   File sharing), or copy the Hydrorisk folder to a local disk and deploy from there." >&2
+    fi
+}
+
+# True when running inside WSL, i.e. launched from Windows (deploy.bat).
+is_wsl() {
+    grep -qi microsoft /proc/version 2>/dev/null
+}
+
+# True if $1 is a Dropbox/OneDrive "online-only" placeholder on the Windows
+# side: it exists and has a size, but its content is only downloaded when
+# Windows itself opens it - not when Docker reads it through a bind mount.
+# OFFLINE (0x1000) | RECALL_ON_DATA_ACCESS (0x400000). WSL only; asks
+# Windows for the attributes, which Linux can't see.
+is_cloud_placeholder() {
+    is_wsl && command -v powershell.exe >/dev/null 2>&1 || return 1
+    local attrs
+    attrs=$(powershell.exe -NoProfile -Command \
+        "[int](Get-Item -LiteralPath '$(wslpath -w "$1")' -Force).Attributes" 2>/dev/null | tr -d '\r')
+    [[ "$attrs" =~ ^[0-9]+$ ]] && (( attrs & (0x1000 | 0x400000) ))
 }
 
 # Prints db's seed-db lines, i.e. whether the first-start seed was restored
@@ -131,19 +154,6 @@ show_seed_log() {
     fi
 }
 
-if [ ! -f .env ]; then
-    echo "No .env found - copying .env.example to .env."
-    cp .env.example .env
-    echo "❌ Edit .env (set POSTGRES_PASSWORD at least), then re-run this script." >&2
-    exit 1
-fi
-# docker compose loads .env on its own; sourced here too so this script's
-# own port-wait/status lines below reflect the same values instead of
-# falling back to their hardcoded defaults.
-set -a
-source .env
-set +a
-
 DB_VOLUME="hydrorisk_db-data"   # compose project "hydrorisk" + volume "db-data"
 SEED_DIR="$(cd "$SH_DIR/../seed" && pwd)"
 SEED_FILE="$SEED_DIR/hydrorisk.sql"
@@ -152,14 +162,20 @@ DAEMON_DIR="$SH_DIR/../volume/daemon-data"
 # First start (no db-data volume yet): the db container restores the seed as
 # the initial database (docker/container/db/seed-db.sh). Without one, the
 # database would start empty - no users, every client gets 401 - so refuse
-# to start at all, before the (slow) image loading below. Once the volume
-# exists the seed is never read again, so it isn't needed then.
+# to start at all: first thing, before asking for anything (password) or
+# the (slow) image loading below. Once the volume exists the seed is never
+# read again, so it isn't needed then.
 FIRST_START=0
 if ! docker volume inspect "$DB_VOLUME" >/dev/null 2>&1; then
     FIRST_START=1
     if [ ! -f "$SEED_FILE" ]; then
         echo "❌ First start (no $DB_VOLUME volume yet), but no seed at docker/seed/hydrorisk.sql." >&2
-        echo "   Create it first: docker/seed/make-seed.sh --from-local  (or --from-stack on the source machine)." >&2
+        echo "   Create it first: docker/seed/make-seed.sh --from-local  (Windows: make-seed.bat --from-local)," >&2
+        echo "   or --from-stack on the machine the stack runs on now." >&2
+        exit 1
+    fi
+    if is_cloud_placeholder "$SEED_FILE"; then
+        echo "❌ docker/seed/hydrorisk.sql is an online-only cloud placeholder - make it \"available offline\" (Dropbox/OneDrive), then re-run." >&2
         exit 1
     fi
     if [ ! -s "$SEED_FILE" ]; then
@@ -167,6 +183,129 @@ if ! docker volume inspect "$DB_VOLUME" >/dev/null 2>&1; then
         exit 1
     fi
     echo "First start - the database will be seeded from docker/seed/hydrorisk.sql ($(du -h "$SEED_FILE" | awk '{print $1}'), $(date -r "$SEED_FILE" '+%Y-%m-%d %H:%M'))."
+fi
+
+# --- .env and the database password --------------------------------------
+# POSTGRES_PASSWORD (.env) is the password of the database's `postgres`
+# superuser: api/daemon log in with it, and so do external clients (QGIS,
+# pgAdmin, ...) on localhost:$DB_HOST_PORT. Postgres only takes it from .env
+# ONCE, when the db-data volume is created - afterwards the database keeps
+# its own copy, and .env must keep matching it. It always comes from the
+# user (never generated): clients are set up with a known one.
+
+# Prints KEY's value from .env (\r and surrounding quotes stripped).
+get_env_var() {
+    sed -n "s/^[[:space:]]*$1[[:space:]]*=//p" .env 2>/dev/null | tail -n1 | tr -d '\r' \
+        | sed -E "s/^'(.*)'\$/\1/; s/^\"(.*)\"\$/\1/"
+}
+
+# Sets KEY=VALUE in .env: replaces KEY's line (or appends it), keeps every
+# other line, writes LF endings. VALUE goes in as-is - quote it yourself.
+# Via ENVIRON, not awk -v, which would mangle backslashes in VALUE.
+set_env_var() {
+    local tmp
+    tmp=$(mktemp)
+    tr -d '\r' < .env | K="$1" V="$2" awk '
+        $0 ~ "^[[:space:]]*" ENVIRON["K"] "[[:space:]]*=" { if (!done) print ENVIRON["K"] "=" ENVIRON["V"]; done = 1; next }
+        { print }
+        END { if (!done) print ENVIRON["K"] "=" ENVIRON["V"] }' > "$tmp"
+    cat "$tmp" > .env
+    rm -f "$tmp"
+}
+
+# Writes a fresh .env from .env.example with password $1. Single-quoted:
+# literal for both docker compose and bash (no $-expansion, # kept) - which
+# is why a password may not contain a single quote itself.
+write_env() {
+    tr -d '\r' < .env.example > .env
+    set_env_var POSTGRES_PASSWORD "'$1'"
+    chmod 600 .env 2>/dev/null || true
+}
+
+backup_note() {
+    echo "🔑 The database password is in docker/deploy/.env (POSTGRES_PASSWORD) - keep a backup of that file with this deployment."
+}
+
+# Asks for the password (hidden, twice) and prints it on stdout.
+prompt_password() {
+    local p1 p2
+    if [ ! -t 0 ]; then
+        echo "❌ No terminal to ask for the database password on - create docker/deploy/.env with POSTGRES_PASSWORD set (see .env.example)." >&2
+        exit 1
+    fi
+    while true; do
+        read -r -s -p "Database password (the one your clients - QGIS, pgAdmin, ... - will use): " p1; echo "" >&2
+        if [ -z "$p1" ] || [ "$p1" = "changeme" ]; then
+            echo "   Please choose a real password (not empty, not 'changeme')." >&2; continue
+        fi
+        if [[ "$p1" == *"'"* ]]; then
+            echo "   The password can't contain a single quote (')." >&2; continue
+        fi
+        read -r -s -p "Type it again: " p2; echo "" >&2
+        [ "$p1" = "$p2" ] && break
+        echo "   The two entries differ - try again." >&2
+    done
+    printf '%s' "$p1"
+}
+
+if [ ! -f .env ]; then
+    if ! docker volume inspect "$DB_VOLUME" >/dev/null 2>&1; then
+        # First deploy: the database will be created with this password.
+        echo "No .env yet - first deploy, setting the database password."
+        NEW_PW=$(prompt_password)   # own assignment, so set -e stops on failure
+        write_env "$NEW_PW"
+        unset NEW_PW
+        echo "✅ .env created."
+        backup_note
+    else
+        # The database already exists with a password .env no longer has.
+        # The db container (if still there) was created with it - recover.
+        RECOVERED=$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' hydrorisk-db 2>/dev/null \
+            | sed -n 's/^POSTGRES_PASSWORD=//p' | head -n1 || true)
+        if [ -z "$RECOVERED" ] || [[ "$RECOVERED" == *"'"* ]]; then
+            echo "❌ No .env, but the database ($DB_VOLUME) already exists - and its password can't be recovered." >&2
+            echo "   Restore the old docker/deploy/.env, or create one from .env.example with the password" >&2
+            echo "   the database was set up with. Or start over from the seed:" >&2
+            echo "   docker compose --profile daemon --profile daemon-gpu down && docker volume rm $DB_VOLUME, then deploy again." >&2
+            exit 1
+        fi
+        write_env "$RECOVERED"
+        unset RECOVERED
+        echo "✅ .env was missing - recreated it with the database password recovered from the hydrorisk-db container."
+        backup_note
+    fi
+fi
+
+# docker compose loads .env on its own; sourced here too so this script's
+# own checks and status lines reflect the same values instead of falling
+# back to their hardcoded defaults. \r stripped: a .env edited in Windows
+# Notepad has CRLF line endings, which would leave e.g. DB_NAME as
+# "hydrorisk\r" - the user-count check below would then fail and wrongly
+# offer to delete the database volume.
+set -a
+source <(tr -d '\r' < .env)
+set +a
+
+if [ -z "${POSTGRES_PASSWORD:-}" ] || [ "$POSTGRES_PASSWORD" = "changeme" ]; then
+    if ! docker volume inspect "$DB_VOLUME" >/dev/null 2>&1; then
+        # Still a first deploy (e.g. .env copied from .env.example): the
+        # database gets created with this password, so ask for a real one.
+        echo "docker/deploy/.env has no real database password yet - first deploy, setting it."
+        NEW_PW=$(prompt_password)
+        set_env_var POSTGRES_PASSWORD "'$NEW_PW'"
+        POSTGRES_PASSWORD="$NEW_PW"
+        unset NEW_PW
+        echo "✅ Password saved in .env."
+        backup_note
+    elif [ -z "${POSTGRES_PASSWORD:-}" ]; then
+        echo "❌ POSTGRES_PASSWORD is empty in docker/deploy/.env - set it to the database password." >&2
+        exit 1
+    fi
+fi
+if [ "$POSTGRES_PASSWORD" = "changeme" ]; then
+    echo "⚠️  The database password is still the default 'changeme' - and the database is reachable on"
+    echo "   localhost:${DB_HOST_PORT:-5433}. To change it: put the new password in docker/deploy/.env, then deploy"
+    echo "   again - it offers to apply it to the database."
 fi
 
 echo "── Images ──"

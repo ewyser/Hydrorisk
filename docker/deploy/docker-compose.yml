@@ -6,23 +6,23 @@
 #
 # Copy .env.example to .env (in this same directory) and fill it in before
 # running. Image tarballs built by each service's docker-build.sh land in
-# ./images/ - ./deploy.sh loads them into the local Docker daemon if they
-# aren't already there (./deploy.sh --reload forces it), then starts the stack.
+# ./images/ - ./deploy.sh loads each one whose image is missing from (or
+# differs from) the local Docker daemon (./deploy.sh --reload forces all),
+# then starts the stack.
 #
 #   docker compose up -d              # db + api only
 #   docker compose --profile daemon up -d daemon   # + daemon
 #
-# daemon's GPU access is host-controlled, not file-controlled: on a machine
-# with an NVIDIA GPU, run this ONCE, outside compose, before ever starting
-# daemon there:
-#   nvidia-ctk runtime configure --runtime=docker --set-as-default && systemctl restart docker
-# That makes Docker's default runtime GPU-aware on that machine permanently,
-# so NVIDIA_VISIBLE_DEVICES below just works. On a machine where that was
-# never run (no GPU, or GPU host not yet prepared), the same env var is
-# inert and daemon starts normally on CPU (cORIUm.jl's own backend selection
-# already falls back to CPU when no GPU is found - see
-# cORIUm.jl/src/boot/needs/backend.jl). No compose-level GPU/non-GPU choice
-# needed - this file is the same on every host.
+# daemon's GPU access: this file requests none, so it runs on every host.
+# The GPU itself is requested by docker-compose.gpu.yml, which deploy.sh /
+# deploy.ps1 add automatically when the host has a working NVIDIA GPU
+# (`nvidia-smi -L`). That explicit request is what Docker Desktop
+# (Windows/WSL2) needs - the NVIDIA_VISIBLE_DEVICES env var below alone only
+# works on a Linux host whose default runtime was made NVIDIA-aware
+# (nvidia-ctk runtime configure --runtime=docker --set-as-default). Without
+# a GPU, daemon starts normally on CPU (cORIUm.jl's backend selection falls
+# back to CPU when CUDA.functional() is false - see
+# cORIUm.jl/src/boot/needs/backend.jl).
 
 name: hydrorisk
 
@@ -49,6 +49,10 @@ services:
       # Same database name api/daemon use - Datastore's bootstrap and the
       # first-start seed (seed-db.sh) both target it.
       HYDRORISK_DB_NAME: ${DB_NAME:-hydrorisk}
+      # A missing/unreadable seed or failed restore on first start is fatal
+      # (see seed-db.sh) rather than silently leaving an empty database -
+      # deploy.sh/deploy.ps1 refuse a first start without a seed anyway.
+      SEED_REQUIRED: "1"
     ports:
       - "${DB_HOST_PORT:-5433}:5432"
     volumes:
@@ -89,6 +93,26 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    healthcheck:
+      # Healthy once the server actually answers GET / with 200 - not just
+      # once the container runs, which is seconds before Julia has loaded
+      # Hydrorisk.jl and listens. GET / needs neither db nor auth (unlike
+      # /health). bash's /dev/tcp because the runtime image has no
+      # curl/wget. `docker compose up --wait` (deploy.sh/deploy.ps1) shows
+      # api as "Waiting" until this passes.
+      #
+      # Only until the first success: that writes /tmp/.api-up, and every
+      # later check just finds it and exits 0 - no more requests (each one
+      # would be logged by the api as "HTTP GET / -> 200"). The marker holds
+      # the start time of the container's main process (/proc/1/stat field
+      # 22), so after a crash-restart it no longer matches and the check
+      # probes again until the new process answers.
+      test: ["CMD", "bash", "-c", "s=$$(cut -d' ' -f22 /proc/1/stat); [ \"$$(cat /tmp/.api-up 2>/dev/null)\" = \"$$s\" ] && exit 0; exec 3<>/dev/tcp/127.0.0.1/8000 && printf 'GET / HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200 ' && echo \"$$s\" > /tmp/.api-up"]
+      interval: 3s
+      timeout: 5s
+      retries: 3
+      # Failures don't count while Julia loads; the first success ends it.
+      start_period: 5m
     restart: unless-stopped
 
   daemon:
@@ -110,15 +134,14 @@ services:
     # the stop grace period regardless), just without a clean job-queue/
     # worker-pool shutdown first. Not fixed here - would need SIGTERM
     # handling added in OsmotiC.jl itself.
-    # OsmotiC.self.sys.job (mutable, defaults to <OsmotiC.jl package dir>/job
-    # - see OsmotiC.jl/src/boot/needs/types/concrete/self.jl and boot.jl's
-    # `self = Self(sys = Path(), ...)`) is never wired to $VOLUME_MOUNT the
-    # way cORIUm.jl's own dump dir is (resolve_dump_dir("VOLUME_MOUNT") in
-    # cORIUm.jl/src/home/program/workflow/cORE.jl) - reassign it here before
-    # calling daemon() so job output lands on the same bind-mounted host
-    # volume as cORIUm's dump/, instead of disappearing when the container
-    # is removed.
-    command: ["bash", "-lc", "julia --project=$$OSMOTIC -e 'using OsmotiC, CUDA; OsmotiC.self.sys.job = joinpath(ENV[\"VOLUME_MOUNT\"], \"job\"); daemon(OsmotiC.self; )'"]
+    #
+    # Output lands on the bind-mounted host volume below ($VOLUME_MOUNT)
+    # without anything wired here: cORIUm puts dump/ there
+    # (resolve_dump_dir in cORIUm.jl/src/home/program/workflow/cORE.jl), and
+    # OsmotiC's __init__ does the same for job/ and logs/ (resolve_sys_dir in
+    # OsmotiC.jl/src/boot/needs/utils.jl) - each falling back to its
+    # in-container default if the mount isn't writable.
+    command: ["bash", "-lc", "julia --project=$$OSMOTIC -e 'using OsmotiC, CUDA; daemon(OsmotiC.self; )'"]
     environment:
       HYDRORISK_DB_HOST: db
       HYDRORISK_DB_PORT: "5432"

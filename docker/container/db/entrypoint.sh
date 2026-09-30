@@ -5,6 +5,16 @@ set -euo pipefail
 # Postgres's normal initdb/startup sequence is untouched below.
 : "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}"
 
+# A required first-start seed failed (see seed-db.sh). Postgres would start
+# fine on the half-initialized PGDATA, and Datastore below would then create
+# an empty database in place of the seed - refuse instead, on every start.
+SEED_FAILED_MARKER="${PGDATA:-/var/lib/postgresql/data}/.hydrorisk-seed-failed"
+if [ -f "$SEED_FAILED_MARKER" ]; then
+    echo "❌ seed-db: first-start seed failed: $(cat "$SEED_FAILED_MARKER")" >&2
+    echo "   Fix it, then: docker compose down && docker volume rm hydrorisk_db-data, and start again." >&2
+    exit 1
+fi
+
 # Datastore.get_db()/load_env! reads six ENV vars (PSWD_DB,
 # HYDRORISK_DB_HOST/PORT/USER/NAME, HYDRORISK_API) and drops into an
 # interactive readline() prompt if *none* are set - fatal in a container.

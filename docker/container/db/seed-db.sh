@@ -19,16 +19,40 @@ set -euo pipefail
 # source Postgres version: lines only a newer pg_dump emits (\restrict/
 # \unrestrict, SET transaction_timeout) are stripped here.
 
+#
+# SEED_REQUIRED=1 (set by docker/deploy/docker-compose.yml): a missing,
+# unreadable or empty dump - or a failed restore - is fatal instead of
+# silently leaving Datastore to bootstrap an empty '$DB'. Typical cause: the
+# host folder behind the /seed bind mount isn't visible to Docker (e.g. an
+# external drive plugged in after Docker Desktop started), which Docker
+# answers with an empty directory rather than an error. A marker file in
+# PGDATA makes entrypoint.sh refuse every later start too, since init is
+# never re-run once PGDATA is populated.
+
 SEED_FILE="${SEED_FILE:-/seed/hydrorisk.sql}"
 DB="${HYDRORISK_DB_NAME:-hydrorisk}"
 PG_USER="${POSTGRES_USER:-postgres}"
+SEED_REQUIRED="${SEED_REQUIRED:-0}"
+FAILED_MARKER="${PGDATA:-/var/lib/postgresql/data}/.hydrorisk-seed-failed"
 
-if [ ! -f "$SEED_FILE" ]; then
+seed_failed() {
+    echo "❌ seed-db: $1" >&2
+    echo "   Fix it, then: docker compose down && docker volume rm hydrorisk_db-data, and start again." >&2
+    if [ "$SEED_REQUIRED" = "1" ]; then
+        echo "$1" > "$FAILED_MARKER"
+    fi
+    exit 1
+}
+
+if [ ! -s "$SEED_FILE" ] || [ ! -r "$SEED_FILE" ]; then
+    if [ "$SEED_REQUIRED" = "1" ]; then
+        seed_failed "no readable, non-empty seed dump at $SEED_FILE (contents of $(dirname "$SEED_FILE"): $(ls -A "$(dirname "$SEED_FILE")" 2>/dev/null | tr '\n' ' ')) - is the host folder visible to Docker?"
+    fi
     echo "seed-db: no seed dump at $SEED_FILE - Datastore will create an empty '$DB'."
     exit 0
 fi
 
-echo "seed-db: restoring $SEED_FILE into '$DB'..."
+echo "seed-db: restoring $SEED_FILE ($(stat -c %s "$SEED_FILE") bytes) into '$DB'..."
 
 # Created here rather than by the dump (pg_dump --create) so the new
 # database gets this container's own encoding/locale - a dump taken on
@@ -42,9 +66,7 @@ createdb -U "$PG_USER" -T template0 -E UTF8 "$DB"
 if ! sed '/^\\restrict/d; /^\\unrestrict/d; /^SET transaction_timeout/d' "$SEED_FILE" \
     | psql -U "$PG_USER" -d "$DB" -v ON_ERROR_STOP=1 --single-transaction --quiet >/dev/null; then
     dropdb -U "$PG_USER" "$DB" || true
-    echo "❌ seed-db: restoring $SEED_FILE failed - see the psql error above." >&2
-    echo "   Fix the dump, then: docker compose down && docker volume rm hydrorisk_db-data, and start again." >&2
-    exit 1
+    seed_failed "restoring $SEED_FILE failed - see the psql error above."
 fi
 
 echo "seed-db: '$DB' restored from $SEED_FILE."

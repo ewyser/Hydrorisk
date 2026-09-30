@@ -1,0 +1,23 @@
+# GPU overlay for daemon - the compose form of `docker run --gpus all`.
+# deploy.sh / deploy.ps1 add it (`-f docker-compose.yml -f
+# docker-compose.gpu.yml`) only when the host has a working NVIDIA GPU
+# (`nvidia-smi -L` succeeds), because on a host without one Docker refuses
+# to create the container at all ("could not select device driver").
+#
+# Needed on Docker Desktop (Windows/WSL2): there a container only gets the
+# GPU through an explicit device request like this one - the
+# NVIDIA_VISIBLE_DEVICES env var in docker-compose.yml alone does nothing,
+# and CUDA.functional() stays false. Harmless on a Linux host whose default
+# runtime is already the NVIDIA one.
+#
+# Manual use: docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile daemon up -d
+
+services:
+  daemon:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

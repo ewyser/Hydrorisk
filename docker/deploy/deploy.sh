@@ -281,9 +281,11 @@ fi
 # back to their hardcoded defaults. \r stripped: a .env edited in Windows
 # Notepad has CRLF line endings, which would leave e.g. DB_NAME as
 # "hydrorisk\r" - the user-count check below would then fail and wrongly
-# offer to delete the database volume.
+# offer to delete the database volume. Through /dev/stdin, not
+# `source <(...)`: macOS's bash 3.2 reads nothing from a process
+# substitution, leaving every variable unset.
 set -a
-source <(tr -d '\r' < .env)
+source /dev/stdin <<< "$(tr -d '\r' < .env)"
 set +a
 
 if [ -z "${POSTGRES_PASSWORD:-}" ] || [ "$POSTGRES_PASSWORD" = "changeme" ]; then

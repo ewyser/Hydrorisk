@@ -97,8 +97,12 @@ x-daemon: &daemon
     db:
       condition: service_healthy
   # daemon(;)'s live status display redraws a full block every tick via
-  # ANSI cursor codes (OsmotiC.jl/src/api/daemon.jl) - without a TTY each
-  # redraw is appended to the log instead, so cap it (~30 MB max).
+  # ANSI cursor codes (OsmotiC.jl/src/api/daemon.jl). With a TTY Docker
+  # records the raw byte stream, so a terminal replaying it
+  # (docker logs -f --tail 20 hydrorisk-daemon) redraws the block in place
+  # instead of stacking a copy per tick. Every redraw is still written to
+  # the log file though, so cap it (~30 MB max).
+  tty: true
   logging:
     options:
       max-size: "10m"

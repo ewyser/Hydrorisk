@@ -68,11 +68,14 @@ WORKDIR ${PKGROOT}
 #
 # The committed Manifest.toml of each package is kept on purpose: it is a
 # known-good resolve for Julia 1.10. `Pkg.add("CUDA")` then adds only CUDA on
-# top of it, bounded by the [compat] section in cORIUm.jl/Project.toml
-# (CUDA "~5.5", KernelAbstractions "0.9"). Without those bounds an
+# top of it - pinned to an exact release here so rebuilds stay reproducible,
+# and that pin must sit within the [compat] section in cORIUm.jl/Project.toml
+# (CUDA "5.9", KernelAbstractions "0.9"). Without those bounds an
 # unconstrained resolve inside the container pulled Julia-1.11-only releases of
 # CUDA (CUDACore split -> `ptxas_path not defined`) and Atomix
-# (`__precompile__(false) is not allowed`) that fail to precompile.
+# (`__precompile__(false) is not allowed`) that fail to precompile. 5.9 is also
+# the floor: older CUDA.jl rejects host drivers for CUDA 13+ ("only supports
+# NVIDIA drivers for CUDA 11.x or 12.x") and falls back to the CPU.
 #
 # Both projects share the default root depot (/root/.julia). OsmotiC also needs
 # CUDA (its cORIUm CUDAExt) - add it there too; the second add resolves against
@@ -85,8 +88,8 @@ WORKDIR ${PKGROOT}
 # runtime. Pkg.add() already performs its own resolve - no extra call needed.
 FROM toolchain AS deps
 COPY daemon/.context/packages/ ${PKGROOT}/
-RUN julia --project=${CORIUM}  -e 'using Pkg; Pkg.instantiate(); Pkg.add("CUDA")'
-RUN julia --project=${OSMOTIC} -e 'using Pkg; Pkg.instantiate(); Pkg.add("CUDA")'
+RUN julia --project=${CORIUM}  -e 'using Pkg; Pkg.instantiate(); Pkg.add(name="CUDA", version="5.11.3")'
+RUN julia --project=${OSMOTIC} -e 'using Pkg; Pkg.instantiate(); Pkg.add(name="CUDA", version="5.11.3")'
 
 # ------------------------------------------------------
 # STAGE 1c: BUILDER

@@ -77,6 +77,12 @@ WORKDIR ${PKGROOT}
 # the floor: older CUDA.jl rejects host drivers for CUDA 13+ ("only supports
 # NVIDIA drivers for CUDA 11.x or 12.x") and falls back to the CPU.
 #
+# Atomic STORES (`@atomic A[i] = v`) cannot work in CUDA kernels on this stack -
+# don't try to fix it by upgrading Atomix: 1.1.x (resolved here) stubs them
+# (KernelException), and 1.2.1 emits a real atomic store that Julia 1.10's
+# LLVM 15 NVPTX backend can't select ("Cannot select: AtomicStore") - it
+# aborts the whole process. Kernels must use plain writes or atomic `+=`.
+#
 # Both projects share the default root depot (/root/.julia). OsmotiC also needs
 # CUDA (its cORIUm CUDAExt) - add it there too; the second add resolves against
 # the already-populated depot and is close to a no-op.

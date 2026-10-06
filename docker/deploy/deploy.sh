@@ -143,6 +143,120 @@ is_cloud_placeholder() {
     [[ "$attrs" =~ ^[0-9]+$ ]] && (( attrs & (0x1000 | 0x400000) ))
 }
 
+# mkdir -p that survives WSL's stale view of a Windows drive: a folder
+# deleted from Windows (Explorer) can stay cached on /mnt/<drive>, and
+# recreating it from WSL then fails with "File exists" although nothing is
+# there. Windows itself isn't fooled - create it from that side instead,
+# after which WSL sees it again. $1 must sit below $SH_DIR's parent tree,
+# which exists (wslpath -w needs an existing path to translate).
+mkdir_p() {
+    mkdir -p "$1" 2>/dev/null && return 0
+    if is_wsl && command -v powershell.exe >/dev/null 2>&1; then
+        local rel="${1#"$SH_DIR"/}"
+        powershell.exe -NoProfile -Command \
+            "New-Item -ItemType Directory -Force -Path '$(wslpath -w "$SH_DIR")\\${rel//\//\\}' | Out-Null" >/dev/null 2>&1 || true
+    fi
+    mkdir -p "$1"
+}
+
+# This machine's IPv4 address on the local network (the one with the default
+# route), for the API URL other machines' QGIS plugins use. Empty if unknown.
+# Under WSL it must be Windows' address, not WSL's internal one: published
+# ports listen on the Windows host.
+lan_ip() {
+    local ip=""
+    if is_wsl && command -v powershell.exe >/dev/null 2>&1; then
+        ip=$(powershell.exe -NoProfile -Command \
+            "(Get-NetIPConfiguration | Where-Object { \$_.IPv4DefaultGateway -and \$_.NetAdapter.Status -eq 'Up' } | Select-Object -First 1).IPv4Address.IPAddress" \
+            2>/dev/null | tr -d '\r' | head -n1)
+    elif command -v ip >/dev/null 2>&1; then
+        ip=$(ip -4 route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p')
+    elif command -v route >/dev/null 2>&1 && command -v ipconfig >/dev/null 2>&1; then
+        # macOS
+        ip=$(ipconfig getifaddr "$(route -n get default 2>/dev/null | awk '/interface:/ {print $2}')" 2>/dev/null || true)
+    fi
+    [[ "$ip" =~ ^[0-9]+(\.[0-9]+){3}$ ]] && echo "$ip"
+    return 0
+}
+
+# Runs PowerShell code $1 on the Windows side (WSL), base64-encoded so no
+# quoting has to survive the bash -> wsl -> powershell layers.
+win_ps() {
+    powershell.exe -NoProfile -NonInteractive -EncodedCommand \
+        "$(printf '%s' "$1" | iconv -t UTF-16LE | base64 -w0)" 2>/dev/null | tr -d '\r'
+}
+
+# WSL only. Windows Firewall verdict for inbound TCP port $1 on the active
+# network's profile: "<Domain|Private|Public> <allowed|blocked|off>", or
+# "unknown". Reads the rules: a connection test from this machine to itself
+# never passes its own inbound firewall, so it would prove nothing.
+win_firewall_status() {
+    local code
+    code=$(cat <<'PS'
+$port = '__PORT__'
+$cat  = (Get-NetConnectionProfile | Where-Object { $_.IPv4Connectivity -ne 'Disconnected' } | Select-Object -First 1).NetworkCategory
+$prof = if ("$cat" -eq 'DomainAuthenticated') { 'Domain' } else { "$cat" }
+if (-not $prof) { 'unknown'; return }
+if ("$((Get-NetFirewallProfile -Name $prof).Enabled)" -ne 'True') { "$prof off"; return }
+$ok = Get-NetFirewallPortFilter -ErrorAction SilentlyContinue |
+    Where-Object { $_.Protocol -eq 'TCP' -and $_.LocalPort -contains $port } |
+    Get-NetFirewallRule |
+    Where-Object { "$($_.Enabled)" -eq 'True' -and "$($_.Direction)" -eq 'Inbound' -and "$($_.Action)" -eq 'Allow' -and
+                   ("$($_.Profile)" -eq 'Any' -or "$($_.Profile)" -match $prof) } |
+    Select-Object -First 1
+if ($ok) { "$prof allowed" } else { "$prof blocked" }
+PS
+)
+    local out
+    out=$(win_ps "${code//__PORT__/$1}" | tail -n1)
+    [[ "$out" =~ ^(Domain|Private|Public)\ (allowed|blocked|off)$ ]] && echo "$out" || echo "unknown"
+}
+
+# WSL only. Adds an inbound allow rule for TCP port $1 on profile $2, through
+# an elevated PowerShell (one UAC prompt).
+win_allow_port() {
+    local code
+    code=$(cat <<'PS'
+$rule = "New-NetFirewallRule -DisplayName 'Hydrorisk API (TCP __PORT__)' -Direction Inbound -Protocol TCP -LocalPort __PORT__ -Action Allow -Profile __PROF__ | Out-Null"
+try { Start-Process powershell.exe -Verb RunAs -Wait -WindowStyle Hidden -ArgumentList '-NoProfile','-Command',$rule } catch { }
+PS
+)
+    code="${code//__PORT__/$1}"
+    win_ps "${code//__PROF__/$2}" >/dev/null
+}
+
+# Other machines reach the API only if this machine's firewall lets inbound
+# TCP $1 through. Linux: Docker opens published ports in iptables itself
+# (bypassing ufw/firewalld); macOS asks on its own. Windows (WSL): check the
+# rules, offer to add the missing one.
+check_api_firewall() {
+    if ! is_wsl || ! command -v powershell.exe >/dev/null 2>&1 || ! command -v iconv >/dev/null 2>&1; then
+        return 0
+    fi
+    local status prof
+    status=$(win_firewall_status "$1")
+    prof=${status% *}
+    case "$status" in
+        *" allowed"|*" off") return 0 ;;
+        *" blocked") ;;
+        *)
+            echo "   (couldn't read the Windows Firewall - if other machines can't connect, allow inbound TCP $1)"
+            return 0 ;;
+    esac
+    echo "⚠️  Windows Firewall blocks inbound TCP $1 on this network ($prof profile): other machines can't reach the API yet."
+    read -p "   Allow it now? Adds the rule 'Hydrorisk API (TCP $1)' - Windows asks for admin rights. [y/N]: " allow_fw
+    if [[ "$allow_fw" =~ ^[Yy]$ ]]; then
+        win_allow_port "$1" "$prof"
+        if [ "$(win_firewall_status "$1")" = "$prof allowed" ]; then
+            echo "✅ Firewall rule added - other machines of the network can now reach the API."
+        else
+            echo "❌ The rule wasn't added (admin prompt declined?). Deploy again to retry."
+        fi
+    else
+        echo "   Skipped - deploy again to be asked again."
+    fi
+}
+
 # Prints db's seed-db lines, i.e. whether the first-start seed was restored
 # and if not, why.
 show_seed_log() {
@@ -158,6 +272,11 @@ DB_VOLUME="hydrorisk_db-data"   # compose project "hydrorisk" + volume "db-data"
 SEED_DIR="$(cd "$SH_DIR/../seed" && pwd)"
 SEED_FILE="$SEED_DIR/hydrorisk.sql"
 DAEMON_DIR="$SH_DIR/../volume/daemon-data"
+
+# This machine's address on the local network - shown up front, and reused for
+# the API URL other machines' QGIS plugins use (end of this script).
+LAN_IP="$(lan_ip)"
+echo "This machine on the local network: ${LAN_IP:-unknown (no IPv4 address with a default route found)}"
 
 # First start (no db-data volume yet): the db container restores the seed as
 # the initial database (docker/container/db/seed-db.sh). Without one, the
@@ -326,7 +445,7 @@ read -p "Also start daemon? (needs a GPU, or falls back to CPU) [y/N]: " with_da
 
 # daemon's output goes to ../volume/daemon-data (bind mount) - check that
 # what the container writes there actually lands in this folder.
-mkdir -p "$DAEMON_DIR"
+mkdir_p "$DAEMON_DIR"
 DAEMON_DIR="$(cd "$DAEMON_DIR" && pwd)"
 if [[ "$with_daemon" =~ ^[Yy]$ ]]; then
     rm -f "$DAEMON_DIR/.docker-probe"
@@ -424,7 +543,13 @@ if ! docker compose "${COMPOSE_ARGS[@]}"; then
 fi
 
 API_PORT="${API_HOST_PORT:-8001}"
-echo "✅ Stack is up. API: http://localhost:${API_PORT}/  ·  DB: localhost:${DB_HOST_PORT:-5433}"
+echo "✅ Stack is up. API: http://localhost:${API_PORT}/  ·  DB: localhost:${DB_HOST_PORT:-5433} (this machine only)"
+if [ -n "$LAN_IP" ]; then
+    echo "   QGIS plugin on other machines of the network: http://${LAN_IP}:${API_PORT}/"
+    check_api_firewall "$API_PORT"
+else
+    echo "   QGIS plugin on other machines of the network: http://<this machine's IP>:${API_PORT}/"
+fi
 docker compose ps
 
 # Images replaced by sync_images above: the recreated containers now run on

@@ -67,6 +67,12 @@ ENV PKGROOT=/home/apiuser/packages
 ENV DATASTORE=${PKGROOT}/Datastore.jl
 ENV HYDRORISK=${PKGROOT}/wrap/Hydrorisk.jl
 ENV HOME=/home/apiuser
+# Build the precompile cache for several x86-64 generations (the same targets
+# as the official Julia binary's sysimage, and as the daemon image), not just
+# the build machine's CPU. Otherwise a deployment host with a different CPU
+# rejects the whole cache and recompiles everything at container start (slow,
+# and noisy: e.g. Revise/LoweredCodeUtils "skipping callee" warnings).
+ENV JULIA_CPU_TARGET="generic;sandybridge,-xsaveopt,clone_all;haswell,-rdrnd,base(1)"
 
 RUN useradd -m apiuser
 

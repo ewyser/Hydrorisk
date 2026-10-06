@@ -35,6 +35,10 @@ ENV JULIA_PREFIX=/opt/julia
 ENV PKGROOT=/home/packages
 ENV DATASTORE=${PKGROOT}/Datastore.jl
 ENV JULIA_PKG_PRECOMPILE_AUTO=no
+# Precompile cache for several x86-64 generations (same targets as the daemon
+# and api images), so a deployment host with a different CPU than the build
+# machine doesn't reject it and recompile Datastore.jl at every container start.
+ENV JULIA_CPU_TARGET="generic;sandybridge,-xsaveopt,clone_all;haswell,-rdrnd,base(1)"
 
 COPY --from=julia /opt/julia ${JULIA_PREFIX}
 ENV PATH=${JULIA_PREFIX}/bin:$PATH

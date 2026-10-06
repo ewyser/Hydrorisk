@@ -120,8 +120,12 @@ services:
       # (see seed-db.sh) rather than silently leaving an empty database -
       # deploy.sh refuses a first start without a seed anyway.
       SEED_REQUIRED: "1"
+    # This machine only (QGIS, pgAdmin, ... on localhost:DB_HOST_PORT): the
+    # postgres superuser must not be reachable from the rest of the network.
+    # api/daemon reach the database over hydrorisk-net (host `db`), not
+    # through this port; other machines go through the API.
     ports:
-      - "${DB_HOST_PORT:-5433}:5432"
+      - "127.0.0.1:${DB_HOST_PORT:-5433}:5432"
     volumes:
       - db-data:/var/lib/postgresql/data
       # Only read on the very first start with a new (empty) db-data
@@ -154,6 +158,9 @@ services:
       PSWD_DB: ${POSTGRES_PASSWORD}
       HYDRORISK_API: "true"
     ports:
+      # All interfaces on purpose: QGIS plugins on other machines of the
+      # local network connect to http://<this machine's IP>:API_HOST_PORT
+      # (deploy.sh prints it).
       - "${API_HOST_PORT:-8001}:8000"
     networks:
       - hydrorisk-net

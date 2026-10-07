@@ -89,13 +89,25 @@ fi
 # content-hashes it automatically - changed package files re-run `deps`
 # (Pkg.instantiate/add, GBs of artifacts) and everything on top; an unchanged
 # staging directory keeps the cache. No CACHEBUST / GitHub token needed.
-docker build $BUILD_ARGS \
+# Stop on a failed build: going on would save the *previous* image under this
+# tag as if it were fresh.
+if ! docker build $BUILD_ARGS \
     -f "$DOCKER_DIR/Dockerfile" --target "$STAGE" \
-    -t "$IMAGE_NAME:$STAGE" "$BUILD_CTXT"
+    -t "$IMAGE_NAME:$STAGE" "$BUILD_CTXT"; then
+    echo "❌ docker build failed - nothing saved." >&2
+    exit 1
+fi
 
 if [ "$STAGE" = "runtime" ]; then
     echo "Saving image ${IMAGE_NAME}:${STAGE} to tarball..."
-    docker save -o "$IMAGE_TAR" "$IMAGE_NAME:$STAGE"
+    # A failed save (e.g. disk full) leaves a truncated tarball that
+    # deploy.sh would try to load - remove it and stop.
+    if ! docker save -o "$IMAGE_TAR" "$IMAGE_NAME:$STAGE"; then
+        rm -f "$IMAGE_TAR"
+        echo "❌ docker save failed - no tarball written. Free space on that drive:" >&2
+        df -h "$DEPLOY_IMAGES_DIR" >&2 || true
+        exit 1
+    fi
     echo ""
     echo "✅ Ready: $IMAGE_TAR"
     echo "   docker/deploy/deploy.sh --reload loads it and starts the"

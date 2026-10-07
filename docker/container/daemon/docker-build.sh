@@ -42,7 +42,7 @@ IMAGE_NAME="hydrorisk-daemon"
 # centralized ../deploy/images/. `builder`/`deps` stay local-image-only,
 # for debugging Pkg.instantiate/add or the pre-precompile layer in isolation.
 DEPLOY_IMAGES_DIR="$SH_DIR/../../deploy/images"
-IMAGE_TAR="$DEPLOY_IMAGES_DIR/${IMAGE_NAME}-${STAGE}.tar"
+IMAGE_TAR="$DEPLOY_IMAGES_DIR/${IMAGE_NAME}.tar"
 
 if [ "$STAGE" = "runtime" ]; then
     mkdir -p "$DEPLOY_IMAGES_DIR"

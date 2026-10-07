@@ -1,10 +1,17 @@
 # ------------------------------------------------------
 # STAGE 1: BUILD TOOLCHAIN, JULIA, AND LIBRARIES
 # ------------------------------------------------------
-FROM nvidia/cuda:12.5.0-devel-ubuntu22.04 AS toolchain
+# CUDA toolkit 12.9: CUDA.jl uses this local toolkit's ptxas to compile GPU
+# kernels (see bake-prefs.jl), so it must know the target GPU's architecture.
+# Blackwell (RTX PRO 6000, RTX 50xx, B200: sm_100/sm_120) needs >= 12.8 -
+# with 12.5, ptxas fell back to sm_90 cubins that the driver refused to load
+# (empty-message error from CuModule on the first kernel launch). Keep it on
+# 12.x: CUDA.jl 5.11 + Julia 1.10 is pinned below. If you change it, update
+# CUDA_VERSION here AND in the runtime stage (ARG + CUDA_ROOT).
+FROM nvidia/cuda:12.9.1-devel-ubuntu22.04 AS toolchain
 
 # Arguments
-ARG CUDA_VERSION=12.5
+ARG CUDA_VERSION=12.9
 ARG OPENMPI_VERSION=4.1.6
 ARG HDF5_VERSION=1.14.3
 # Latest 1.10 LTS patch, not 1.10.5: Pkg in 1.10.5 falsely reports a circular dependency
@@ -122,7 +129,7 @@ FROM ubuntu:22.04 AS runtime
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-ENV CUDA_ROOT=/usr/local/cuda-12.5
+ENV CUDA_ROOT=/usr/local/cuda-12.9
 ENV OPENMPI_PREFIX=/opt/openmpi-cuda
 ENV HDF5_PREFIX=/opt/hdf5-parallel
 ENV JULIA_DIR=/opt/julia
@@ -147,7 +154,7 @@ ENV OMPI_MCA_opal_warn_on_missing_libcuda=0
 ENV CORIUM_MPIEXEC_PATH=${OPENMPI_PREFIX}/bin/mpiexec
 ENV CORIUM_HDF5_LIB=${HDF5_PREFIX}/lib/libhdf5.so
 ENV CORIUM_HDF5_HL_LIB=${HDF5_PREFIX}/lib/libhdf5_hl.so
-ARG CUDA_VERSION=12.5
+ARG CUDA_VERSION=12.9
 ENV CORIUM_CUDA_VERSION=${CUDA_VERSION}
 # Baked preferences differ per project (see bake-prefs.jl):
 #   --project=$CORIUM   MPI (system OpenMPI) + HDF5 (system parallel) + CUDA

@@ -120,6 +120,41 @@ RUN julia --project=${OSMOTIC} -e 'using Pkg; Pkg.instantiate(); Pkg.add(name="C
 # MPI/HDF5/CUDA preferences (LocalPreferences.toml) are baked in the runtime
 # stage, right before its precompile - see bake-prefs.jl.
 FROM deps AS builder
+
+# Trimmed CUDA toolkit for the runtime stage (/opt/cuda-slim, same layout as
+# ${CUDA_ROOT}). The full -devel toolkit is ~7.8 GB - nvcc, Nsight, NPP,
+# nvrtc, headers, docs and multi-GB *_static.a libraries - while CUDA.jl's
+# local-toolkit mode only uses what CUDA_Runtime_Discovery.__init__ looks up:
+#   binaries   ptxas, nvdisasm, nvlink
+#   libraries  cudart, cufft, cublas, cublasLt, cusparse, cusolver,
+#              cusolverMg, curand, nvvm, cupti, nvperf_host, nvperf_target
+#              (discovery also searches extras/CUPTI, but 12.9 ships CUPTI
+#              in targets/x86_64-linux/lib with the rest)
+#   files      libcudadevrt.a, nvvm/libdevice/libdevice.10.bc
+# plus nvJitLink, which cusparse/cusolver link against. That list is the
+# source of truth: if a CUDA.jl upgrade looks up more, add it here - the
+# runtime stage's discovery check fails the build until then.
+# `cp -a` keeps the libraries' version symlinks; a missing glob fails the
+# build here, and so does any library whose dependencies (other than the
+# driver's libcuda, injected at container start) didn't come along.
+RUN set -eu; \
+    src="${CUDA_ROOT}"; dst=/opt/cuda-slim; tlib=targets/x86_64-linux/lib; \
+    mkdir -p "$dst/bin" "$dst/$tlib" "$dst/nvvm/lib64"; \
+    cp -a "$src/bin/ptxas" "$src/bin/nvdisasm" "$src/bin/nvlink" "$dst/bin/"; \
+    for lib in cudart cufft cublas cublasLt cusparse cusolver cusolverMg curand nvJitLink cupti nvperf_host nvperf_target; do \
+        cp -a "$src/$tlib/lib$lib.so"* "$dst/$tlib/"; \
+    done; \
+    cp -a "$src/$tlib/libcudadevrt.a" "$dst/$tlib/"; \
+    ln -s "$tlib" "$dst/lib64"; \
+    cp -a "$src/nvvm/lib64/libnvvm.so"* "$dst/nvvm/lib64/"; \
+    cp -a "$src/nvvm/libdevice" "$dst/nvvm/"; \
+    if [ -f "$src/version.json" ]; then cp -a "$src/version.json" "$dst/"; fi; \
+    missing=$(for so in "$dst/$tlib"/*.so "$dst/nvvm/lib64"/*.so; do \
+        LD_LIBRARY_PATH="$dst/$tlib" ldd "$so" | grep 'not found' | grep -v 'libcuda\.so' | sed "s|^|$(basename "$so"): |"; \
+    done); \
+    if [ -n "$missing" ]; then echo "cuda-slim: unresolved libraries:"; echo "$missing"; exit 1; fi; \
+    du -sh "$src" "$dst"
+
 CMD ["bash"]
 
 # ------------------------------------------------------
@@ -185,32 +220,32 @@ RUN apt-get update && apt-get install -y \
 # Create non-root user
 RUN useradd -m mpiuser
 
-# Copy built software from builder stage
-COPY --from=builder /opt/openmpi-cuda /opt/openmpi-cuda
-COPY --from=builder /opt/hdf5-parallel /opt/hdf5-parallel
-COPY --from=builder /opt/julia /opt/julia
-COPY --from=builder /home/packages /home/mpiuser/packages
+# Copy built software from builder stage - owned by mpiuser straight away
+# (COPY --chown). Do NOT go back to a separate `RUN chown -R` afterwards:
+# a layer that changes only ownership still stores a full copy of every file
+# it touches - it doubled this image (+10 GB: CUDA, Julia and the depot twice).
+COPY --chown=mpiuser:mpiuser --from=builder /opt/openmpi-cuda /opt/openmpi-cuda
+COPY --chown=mpiuser:mpiuser --from=builder /opt/hdf5-parallel /opt/hdf5-parallel
+COPY --chown=mpiuser:mpiuser --from=builder /opt/julia /opt/julia
+COPY --chown=mpiuser:mpiuser --from=builder /home/packages /home/mpiuser/packages
 
-# The CUDA toolkit itself (ptxas, nvcc, headers, static libs) - this stage is
-# plain ubuntu:22.04, not the nvidia/cuda:...-devel image the builder stage
-# uses. --gpus all / the NVIDIA container runtime only injects driver libraries
-# at container start, not the toolkit - CUDA.jl still needs ptxas at runtime to
-# JIT-compile GPU kernels.
-COPY --from=builder ${CUDA_ROOT} ${CUDA_ROOT}
+# The CUDA toolkit (ptxas, libdevice, cuBLAS & co.) - this stage is plain
+# ubuntu:22.04, not the nvidia/cuda:...-devel image the builder stage uses.
+# --gpus all / the NVIDIA container runtime only injects driver libraries at
+# container start, not the toolkit - CUDA.jl still needs ptxas at runtime to
+# JIT-compile GPU kernels. Only the parts CUDA.jl uses: /opt/cuda-slim, see
+# the builder stage.
+COPY --chown=mpiuser:mpiuser --from=builder /opt/cuda-slim ${CUDA_ROOT}
 
 # The Julia package depot itself (installed packages + downloaded artifacts) -
 # built by Pkg.instantiate() in the deps stage under root's default depot,
 # /root/.julia. Without this, Project.toml/Manifest.toml describe what should be
 # installed, but nothing here actually is.
-COPY --from=builder /root/.julia /home/mpiuser/.julia
+COPY --chown=mpiuser:mpiuser --from=builder /root/.julia /home/mpiuser/.julia
 
 # Entrypoint: output-mount permissions, DB config, privilege drop
-COPY daemon/entrypoint.sh /home/mpiuser/entrypoint.sh
-RUN chmod +x /home/mpiuser/entrypoint.sh
-COPY daemon/bake-prefs.jl /home/mpiuser/bake-prefs.jl
-
-# Fix ownership
-RUN chown -R mpiuser:mpiuser /opt ${CUDA_ROOT} /home/mpiuser/packages /home/mpiuser/.julia /home/mpiuser/entrypoint.sh /home/mpiuser/bake-prefs.jl
+COPY --chown=mpiuser:mpiuser --chmod=755 daemon/entrypoint.sh /home/mpiuser/entrypoint.sh
+COPY --chown=mpiuser:mpiuser --chmod=755 daemon/bake-prefs.jl /home/mpiuser/bake-prefs.jl
 
 # NOTE: the container deliberately starts as root so entrypoint.sh can make a
 # bind-mounted $VOLUME_MOUNT writable before dropping to mpiuser (via `runuser`)
@@ -234,6 +269,16 @@ RUN runuser -u mpiuser -- julia --project=${CORIUM}  /home/mpiuser/bake-prefs.jl
 RUN runuser -u mpiuser -- julia --project=${OSMOTIC} /home/mpiuser/bake-prefs.jl --cuda-only
 RUN runuser -u mpiuser -- julia --project=${CORIUM}  -e 'using Pkg; Pkg.precompile()'
 RUN runuser -u mpiuser -- julia --project=${OSMOTIC} -e 'using Pkg; Pkg.precompile()'
+
+# Fail the build, not the GPU host, if the trimmed toolkit (/opt/cuda-slim,
+# see the builder stage) misses something CUDA.jl looks up: discovery only
+# checks files, so it runs without a GPU. Otherwise CUDA.functional() would
+# just be false at run time and the daemon would quietly fall back to the CPU.
+RUN runuser -u mpiuser -- julia --project=${OSMOTIC} -e ' \
+    using UUIDs: UUID; \
+    D = Base.require(Base.PkgId(UUID("1af6417a-86b4-443c-805f-a4643ffb695f"), "CUDA_Runtime_Discovery")); \
+    D.is_available() || error("CUDA_Runtime_Discovery could not find the toolkit at $(ENV["CUDA_ROOT"]) - see the log above"); \
+    println("✅ CUDA toolkit found: ", D.cuda_version, " (ptxas: ", D.ptxas_path, ")")'
 
 ENTRYPOINT ["/home/mpiuser/entrypoint.sh"]
 CMD ["/bin/bash"]

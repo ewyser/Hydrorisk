@@ -10,7 +10,7 @@ set -euo pipefail
 # accept connections before returning.
 #
 # Usage: ./deploy.sh [--reload]
-#   --reload   always (re)load every ./images/*.tar, even if the loaded
+#   --reload   always (re)load every ./images/*.tar(.gz), even if the loaded
 #              images already match them. Without it, only tarballs whose
 #              image differs from (or is missing in) the local Docker daemon
 #              are loaded - freshly built tarballs are picked up on their own.
@@ -39,12 +39,27 @@ for arg in "$@"; do
     esac
 done
 
+# Tarballs are gzip-compressed (<image>.tar.gz, written by
+# docker/container/save-image.sh); plain .tar from older builds still work.
+# `docker load -i` reads both.
+#
+# A .tar.gz comes with a <tarball>.ids sidecar - tag on line 1, image IDs
+# after - holding exactly what the two functions below would read from the
+# tarball itself: its index.json/manifest.json sit at the end of the
+# compressed stream, so reading them there decompresses the whole image.
+# Without a sidecar they still do that (GNU tar detects gzip on its own) -
+# slow, but correct.
+
 # Prints the image IDs a tarball's image can have once loaded (without the
 # sha256: prefix): the index digest (containerd image store, e.g. Docker
 # Desktop's default) and the config digest (classic image store). Read from
-# the tarball's small index.json/manifest.json - tar seeks past the layers,
-# so this is instant even for multi-GB tarballs.
+# the tarball's small index.json/manifest.json - for a plain .tar, tar seeks
+# past the layers, so this is instant even for multi-GB tarballs.
 tar_image_ids() {
+    if [ -f "$1.ids" ]; then
+        tail -n +2 "$1.ids" | grep -o '[0-9a-f]\{64\}' || true
+        return 0
+    fi
     { tar -xOf "$1" index.json 2>/dev/null | grep -o '"digest":"sha256:[0-9a-f]*"' | head -n1
       tar -xOf "$1" manifest.json 2>/dev/null | grep -o '"Config":"[^"]*"'
     } | grep -o '[0-9a-f]\{64\}' || true
@@ -52,6 +67,10 @@ tar_image_ids() {
 
 # Prints the tag a tarball's image is loaded as (e.g. hydrorisk-db:latest).
 tar_image_tag() {
+    if [ -f "$1.ids" ]; then
+        head -n1 "$1.ids" | tr -d '\r'
+        return 0
+    fi
     tar -xOf "$1" manifest.json 2>/dev/null \
         | grep -o '"RepoTags":\["[^"]*"' | head -n1 | sed 's/.*\["//; s/"$//' || true
 }
@@ -67,15 +86,22 @@ sync_images() {
     local images_dir="$SH_DIR/images"
     local tars tar tag current ids
     shopt -s nullglob
-    tars=("$images_dir"/*.tar)
+    tars=("$images_dir"/*.tar.gz "$images_dir"/*.tar)
     shopt -u nullglob
 
     if [ ${#tars[@]} -eq 0 ]; then
-        echo "❌ No .tar files found in $images_dir - build the images first (docker/container/{db,api,daemon} each have their own docker-build.sh)." >&2
+        echo "❌ No .tar.gz/.tar files found in $images_dir - build the images first (docker/container/{db,api,daemon} each have their own docker-build.sh)." >&2
         exit 1
     fi
 
     for tar in "${tars[@]}"; do
+        # A leftover plain .tar next to a .tar.gz of the same image is an
+        # older build (save-image.sh removes it, but it may have been copied
+        # over by hand) - the .tar.gz wins.
+        if [[ "$tar" == *.tar ]] && [ -f "$tar.gz" ]; then
+            echo "Skipping $(basename "$tar") - $(basename "$tar").gz replaces it (delete the .tar)."
+            continue
+        fi
         tag=$(tar_image_tag "$tar")
         current=""
         if [ -n "$tag" ]; then
@@ -98,7 +124,7 @@ sync_images() {
 
     for img in hydrorisk-db:latest hydrorisk-api:latest hydrorisk-daemon:runtime; do
         if ! docker image inspect "$img" >/dev/null 2>&1; then
-            echo "❌ $img is neither loaded nor in any images/*.tar - build it first (docker/container/*/docker-build.sh)." >&2
+            echo "❌ $img is neither loaded nor in any images/*.tar(.gz) - build it first (docker/container/*/docker-build.sh)." >&2
             exit 1
         fi
     done
@@ -457,7 +483,7 @@ if [[ "$with_daemon" =~ ^[Yy]$ ]]; then
     fi
     rm -f "$DAEMON_DIR/.docker-probe"
 fi
-# --pull never: these images only ever come from images/*.tar, never a
+# --pull never: these images only ever come from images/*.tar(.gz), never a
 # registry - a missing image should fail as such, not as a confusing
 # "pull access denied".
 # --wait: return only once db and api are healthy (daemon: running) - api's

@@ -42,7 +42,7 @@ IMAGE_NAME="hydrorisk-daemon"
 # centralized ../deploy/images/. `builder`/`deps` stay local-image-only,
 # for debugging Pkg.instantiate/add or the pre-precompile layer in isolation.
 DEPLOY_IMAGES_DIR="$SH_DIR/../../deploy/images"
-IMAGE_TAR="$DEPLOY_IMAGES_DIR/${IMAGE_NAME}.tar"
+IMAGE_TAR="$DEPLOY_IMAGES_DIR/${IMAGE_NAME}.tar.gz"
 
 if [ "$STAGE" = "runtime" ]; then
     mkdir -p "$DEPLOY_IMAGES_DIR"
@@ -51,7 +51,7 @@ if [ "$STAGE" = "runtime" ]; then
         read -p "Delete it and continue? (y/N): " confirm
         if [[ "$confirm" =~ ^[Yy]$ ]]; then
             echo "Deleting existing tarball..."
-            rm "$IMAGE_TAR"
+            rm -f "$IMAGE_TAR" "$IMAGE_TAR.ids"
         else
             echo "Aborting to avoid overwriting existing tarball."
             exit 1
@@ -99,15 +99,10 @@ if ! docker build $BUILD_ARGS \
 fi
 
 if [ "$STAGE" = "runtime" ]; then
-    echo "Saving image ${IMAGE_NAME}:${STAGE} to tarball..."
-    # A failed save (e.g. disk full) leaves a truncated tarball that
-    # deploy.sh would try to load - remove it and stop.
-    if ! docker save -o "$IMAGE_TAR" "$IMAGE_NAME:$STAGE"; then
-        rm -f "$IMAGE_TAR"
-        echo "❌ docker save failed - no tarball written. Free space on that drive:" >&2
-        df -h "$DEPLOY_IMAGES_DIR" >&2 || true
-        exit 1
-    fi
+    # gzip-compressed, written atomically (a failed save, e.g. disk full,
+    # leaves nothing deploy.sh would try to load), plus a .ids sidecar for
+    # deploy.sh - see ../save-image.sh. `docker load -i` reads the .tar.gz as is.
+    "$SH_DIR/../save-image.sh" "$IMAGE_NAME:$STAGE" "$IMAGE_TAR" || exit 1
     echo ""
     echo "✅ Ready: $IMAGE_TAR"
     echo "   docker/deploy/deploy.sh --reload loads it and starts the"

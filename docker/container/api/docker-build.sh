@@ -9,7 +9,7 @@ set -euo pipefail
 SH_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 IMAGE_NAME="hydrorisk-api"
 DEPLOY_IMAGES_DIR="$SH_DIR/../../deploy/images"
-IMAGE_TAR="$DEPLOY_IMAGES_DIR/${IMAGE_NAME}.tar"
+IMAGE_TAR="$DEPLOY_IMAGES_DIR/${IMAGE_NAME}.tar.gz"
 
 # prep-context.sh stages Datastore.jl + Hydrorisk.jl into .context/packages/
 # before building; always tear it down again, however the script ends.
@@ -30,7 +30,7 @@ if [ -f "$IMAGE_TAR" ]; then
     echo "Image tarball already exists at: $IMAGE_TAR"
     read -p "Delete it and continue? (y/N): " confirm
     if [[ "$confirm" =~ ^[Yy]$ ]]; then
-        rm "$IMAGE_TAR"
+        rm -f "$IMAGE_TAR" "$IMAGE_TAR.ids"
     else
         echo "Aborting to avoid overwriting existing tarball."
         exit 1
@@ -60,8 +60,9 @@ echo "Building Docker image '$IMAGE_NAME'..."
 # `set -u`, even though modern bash doesn't.
 docker build "${BUILD_ARGS[@]+"${BUILD_ARGS[@]}"}" -f "$SH_DIR/Dockerfile" -t "$IMAGE_NAME" "$SH_DIR/.."
 
-echo "Saving image ${IMAGE_NAME}:latest to tarball..."
-docker save -o "$IMAGE_TAR" "$IMAGE_NAME:latest"
+# gzip-compressed, written atomically, plus a .ids sidecar for deploy.sh -
+# see ../save-image.sh. `docker load -i` reads the .tar.gz as is.
+"$SH_DIR/../save-image.sh" "$IMAGE_NAME:latest" "$IMAGE_TAR"
 
 echo ""
 echo "✅ Ready: $IMAGE_TAR"

@@ -157,6 +157,13 @@ services:
       HYDRORISK_DB_NAME: ${DB_NAME:-hydrorisk}
       PSWD_DB: ${POSTGRES_PASSWORD}
       HYDRORISK_API: "true"
+      VOLUME_MOUNT: /mnt/output
+    # Hydrorisk.__init__ writes the QGIS plugin zip into $VOLUME_MOUNT
+    # (resolve_out_dir in Hydrorisk.jl/src/needs/utils.jl), so it lands on
+    # the host as volume/api-data/hydrorisk_plugin.zip - falling back to the
+    # in-container gis/ if the mount isn't writable.
+    volumes:
+      - ../volume/api-data:/mnt/output
     ports:
       # All interfaces on purpose: QGIS plugins on other machines of the
       # local network connect to http://<this machine's IP>:API_HOST_PORT

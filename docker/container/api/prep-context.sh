@@ -23,6 +23,13 @@ HYDRORISK_JL_SRC="$GIT_ROOT/crealp-hydrorisk/Hydrorisk.jl"
 
 DEST="$SH_DIR/.context/packages"
 
+# rsync applies the first matching rule, so excludes that must also apply
+# inside an included dir (e.g. a stale gis/hydrorisk_plugin.zip - the api
+# builds a fresh one at startup) go here, before INCLUDES.
+PRE_EXCLUDES=(
+    --exclude="*.zip"
+    --exclude=".DS_Store"
+)
 INCLUDES=(
     --include="Project.toml"
     --include="Manifest.toml"
@@ -40,8 +47,6 @@ EXCLUDES=(
     --exclude="files/"
     --exclude=".vscode/"
     --exclude="*.code-workspace"
-    --exclude="*.zip"
-    --exclude=".DS_Store"
     --exclude="*"
 )
 
@@ -59,10 +64,10 @@ if [ ! -d "$HYDRORISK_JL_SRC" ]; then
 fi
 
 echo "→ staging Datastore.jl"
-rsync -a --delete "${INCLUDES[@]}" "${EXCLUDES[@]}" "$GIT_ROOT/Datastore.jl/" "$DEST/Datastore.jl/"
+rsync -a --delete "${PRE_EXCLUDES[@]}" "${INCLUDES[@]}" "${EXCLUDES[@]}" "$GIT_ROOT/Datastore.jl/" "$DEST/Datastore.jl/"
 
 echo "→ staging Hydrorisk.jl"
-rsync -a --delete "${INCLUDES[@]}" "${EXCLUDES[@]}" "$HYDRORISK_JL_SRC/" "$DEST/wrap/Hydrorisk.jl/"
+rsync -a --delete "${PRE_EXCLUDES[@]}" "${INCLUDES[@]}" "${EXCLUDES[@]}" "$HYDRORISK_JL_SRC/" "$DEST/wrap/Hydrorisk.jl/"
 
 for pkg in "Datastore.jl" "wrap/Hydrorisk.jl"; do
     if [ ! -f "$DEST/$pkg/Project.toml" ]; then

@@ -1,6 +1,38 @@
 #!/bin/bash
 set -euo pipefail
 
+# --- output-mount permissions + privilege drop --------------------------
+# The server runs as the unprivileged "apiuser". A host directory
+# bind-mounted at $VOLUME_MOUNT (docker-compose.yml: ../volume/api-data)
+# lands owned by root:root on Linux and is not writable by apiuser - then
+# Hydrorisk.__init__ would keep the QGIS plugin zip inside the container.
+#
+# Fix it while we still can: the container *starts* as root (no
+# `USER apiuser` in the Dockerfile), makes the mount writable, then drops
+# to apiuser for everything else - same as the daemon's entrypoint. Each
+# step is failure-tolerant; on mount backends that ignore chown/chmod
+# (virtiofs for Windows drives) Hydrorisk's resolve_out_dir() falls back
+# to the in-package gis/ directory rather than crashing.
+if [ "$(id -u)" = "0" ]; then
+    mount_dir="${VOLUME_MOUNT:-}"
+    if [ -n "$mount_dir" ] && [ -d "$mount_dir" ]; then
+        chown -R apiuser:apiuser "$mount_dir" 2>/dev/null || true
+        chmod -R u+rwX,go+rwX    "$mount_dir" 2>/dev/null || true
+        if ! su apiuser -s /bin/sh -c "test -w '$mount_dir'" 2>/dev/null; then
+            echo "⚠️  $mount_dir is not writable by apiuser; the QGIS plugin"
+            echo "    zip will be kept inside the container instead. Fix the"
+            echo "    mount ownership on the host to get it in volume/api-data/."
+        fi
+    fi
+    # Drop to the unprivileged user for the server. Prefer runuser
+    # (util-linux); fall back to su.
+    if command -v runuser >/dev/null 2>&1; then
+        exec runuser -u apiuser -- "$0" "$@"
+    else
+        exec su apiuser -s /bin/bash -c 'exec "$@"' bash "$0" "$@"
+    fi
+fi
+
 # --- database configuration -------------------------------------------
 # Datastore.load_env!(nothing) reads DB settings from six env vars (PSWD_DB,
 # HYDRORISK_DB_HOST/PORT/USER/NAME, HYDRORISK_API). It never looks for a

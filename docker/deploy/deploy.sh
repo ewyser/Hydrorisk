@@ -298,6 +298,7 @@ DB_VOLUME="hydrorisk_db-data"   # compose project "hydrorisk" + volume "db-data"
 SEED_DIR="$(cd "$SH_DIR/../seed" && pwd)"
 SEED_FILE="$SEED_DIR/hydrorisk.sql"
 DAEMON_DIR="$SH_DIR/../volume/daemon-data"
+API_DIR="$SH_DIR/../volume/api-data"
 
 # This machine's address on the local network - shown up front, and reused for
 # the API URL other machines' QGIS plugins use (end of this script).
@@ -466,6 +467,21 @@ if [ "$FIRST_START" -eq 1 ] && ! test_docker_mount "$SEED_DIR" "test -s /probe/h
     exit 1
 fi
 
+# api writes the QGIS plugin zip to ../volume/api-data (bind mount) - created
+# here rather than by Docker (which would make it root-owned on Linux), and
+# checked like daemon-data below: what the container writes there must
+# actually land in this folder.
+mkdir_p "$API_DIR"
+API_DIR="$(cd "$API_DIR" && pwd)"
+rm -f "$API_DIR/.docker-probe"
+test_docker_mount "$API_DIR" "touch /probe/.docker-probe" || true
+if [ ! -f "$API_DIR/.docker-probe" ]; then
+    echo "❌ A container mounting $API_DIR can't write into it - the QGIS plugin zip wouldn't reach volume/." >&2
+    docker_mount_hint
+    exit 1
+fi
+rm -f "$API_DIR/.docker-probe"
+
 echo ""
 read -p "Also start daemon? (needs a GPU, or falls back to CPU) [y/N]: " with_daemon
 
@@ -577,6 +593,14 @@ else
     echo "   QGIS plugin on other machines of the network: http://<this machine's IP>:${API_PORT}/"
 fi
 docker compose ps
+
+# api's entrypoint warns (and Hydrorisk keeps the plugin zip inside the
+# container) when the volume/ mount isn't writable for its user.
+if docker logs hydrorisk-api 2>&1 | grep -q "not writable by apiuser"; then
+    echo "⚠️  api can't write to $API_DIR - the QGIS plugin zip stays inside the container. See: docker logs hydrorisk-api"
+else
+    echo "   QGIS plugin zip (install via QGIS > Plugins > Install from ZIP): $API_DIR/hydrorisk_plugin.zip"
+fi
 
 # Images replaced by sync_images above: the recreated containers now run on
 # the new ones, so the old ones are just disk space. One still used by a

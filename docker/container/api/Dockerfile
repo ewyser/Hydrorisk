@@ -84,15 +84,21 @@ COPY api/entrypoint.sh /home/apiuser/entrypoint.sh
 RUN chmod +x /home/apiuser/entrypoint.sh && \
     chown -R apiuser:apiuser /opt /home/apiuser
 
-# Hydrorisk.__init__ writes gis/hydrorisk_plugin.zip and creates jobs/ and
-# files/ under its own package root at every module load, so that dir - not
-# just the depot - must be writable by apiuser (chown above already covers
-# it via /home/apiuser).
-USER apiuser
+# Hydrorisk.__init__ creates jobs/ and files/ under its own package root at
+# every module load, and writes the QGIS plugin zip to $VOLUME_MOUNT (the
+# host bind mount, see docker-compose.yml) - or to gis/ in the package root
+# when nothing writable is mounted there. So the package root - not just the
+# depot - must be writable by apiuser (chown above already covers it via
+# /home/apiuser).
+#
+# The container starts as root on purpose: entrypoint.sh makes the
+# bind-mounted $VOLUME_MOUNT writable, then drops to apiuser (via `runuser`)
+# for the server. Do not add `USER apiuser` back here - build-time steps run
+# as apiuser through runuser instead.
 WORKDIR ${HYDRORISK}
 
 # Precompiles Datastore.jl too, as Hydrorisk.jl's dependency.
-RUN julia --project=${HYDRORISK} -e 'using Pkg; Pkg.precompile()'
+RUN runuser -u apiuser -- julia --project=${HYDRORISK} -e 'using Pkg; Pkg.precompile()'
 
 EXPOSE 8000
 ENTRYPOINT ["/home/apiuser/entrypoint.sh"]

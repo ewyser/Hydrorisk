@@ -4,7 +4,7 @@ set -euo pipefail
 #
 # Usage: save-image.sh <image:tag> <out.tar.gz>
 #
-# Shared by the three docker-build.sh (api, db, daemon): saves an image as a
+# Shared by the three build.sh (api, db, daemon): saves an image as a
 # gzip-compressed tarball for docker/deploy/images/. Nothing uncompressed
 # ever lands on disk - `docker save` is streamed straight into gzip.
 #

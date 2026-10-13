@@ -7,7 +7,7 @@ set -euo pipefail
 # that make up the daemon image into
 #   docker/daemon/.context/packages/<pkg>/
 # so that `docker build` (context = docker/daemon/) can COPY them.
-# The staging dir is hidden (.context) and transient - docker-build.sh
+# The staging dir is hidden (.context) and transient - build.sh
 # removes it after the build.
 #
 # Why staging: the real source trees carry multi-GB .git dirs (cORIUm.jl ~6G,

@@ -1,23 +1,38 @@
 #!/bin/bash
-# docker-build.sh
+# build.sh
 
 # Define valid STAGE options & interactive selection. `deps` is the Dockerfile's
 # intermediate stage (dependency resolution) - useful to target directly when
 # debugging Pkg.instantiate/add in isolation without a full runtime build.
 VALID_STAGES=("builder" "runtime" "deps")
-echo "Please select the stage:"
-select STAGE in "${VALID_STAGES[@]}" "Cancel"; do
-    # Check if the selected STAGE is valid by matching with VALID_STAGES array
-    if [[ " ${VALID_STAGES[@]} " =~ " ${STAGE} " ]]; then
-        echo "You selected: $STAGE"
-        break
-    elif [ "$STAGE" == "Cancel" ]; then
-        echo "Operation canceled."
-        exit 0
-    else
-        echo "Invalid selection. Please choose a valid option."
+# HR_STAGE skips the menu - set by ../build-all.sh (always `runtime`).
+if [ -n "${HR_STAGE:-}" ]; then
+    if [[ ! " ${VALID_STAGES[@]} " =~ " ${HR_STAGE} " ]]; then
+        echo "❌ Invalid HR_STAGE '$HR_STAGE' (expected: ${VALID_STAGES[*]})." >&2
+        exit 1
     fi
-done
+    STAGE="$HR_STAGE"
+    echo "Stage: $STAGE (from HR_STAGE)"
+else
+    echo "Please select the stage:"
+    select STAGE in "${VALID_STAGES[@]}" "Cancel"; do
+        # Check if the selected STAGE is valid by matching with VALID_STAGES array
+        if [[ " ${VALID_STAGES[@]} " =~ " ${STAGE} " ]]; then
+            echo "You selected: $STAGE"
+            break
+        elif [ "$STAGE" == "Cancel" ]; then
+            echo "Operation canceled."
+            exit 0
+        else
+            echo "Invalid selection. Please choose a valid option."
+        fi
+    done
+    # `select` also ends on EOF (no terminal) with nothing chosen.
+    if [ -z "${STAGE:-}" ]; then
+        echo "❌ No stage selected." >&2
+        exit 1
+    fi
+fi
 
 SH_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 # Build context is this directory (docker/daemon/). prep-context.sh
@@ -48,7 +63,12 @@ if [ "$STAGE" = "runtime" ]; then
     mkdir -p "$DEPLOY_IMAGES_DIR"
     if [ -f "$IMAGE_TAR" ]; then
         echo "Image tarball already exists at: $IMAGE_TAR"
-        read -p "Delete it and continue? (y/N): " confirm
+        # HR_OVERWRITE (y/n) answers this up front - set by ../build-all.sh.
+        if [ -n "${HR_OVERWRITE:-}" ]; then
+            confirm="$HR_OVERWRITE"
+        else
+            read -p "Delete it and continue? (y/N): " confirm
+        fi
         if [[ "$confirm" =~ ^[Yy]$ ]]; then
             echo "Deleting existing tarball..."
             rm -f "$IMAGE_TAR" "$IMAGE_TAR.ids"
@@ -81,7 +101,12 @@ echo "Building Docker image '$IMAGE_NAME' for stage '$STAGE'..."
 # just its default behavior) so "no" clearly maps to disabling it, instead
 # of the double-negative "Use --no-cache? (y/N)".
 BUILD_ARGS=""
-read -p "Use --use-cache? (Y/n): " cache_input
+# HR_USE_CACHE (y/n) answers this up front - set by ../build-all.sh.
+if [ -n "${HR_USE_CACHE:-}" ]; then
+    cache_input="$HR_USE_CACHE"
+else
+    read -p "Use --use-cache? (Y/n): " cache_input
+fi
 if [[ "$cache_input" =~ ^[Nn]$ ]]; then
     BUILD_ARGS="--no-cache"
 fi

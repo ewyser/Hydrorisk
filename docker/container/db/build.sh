@@ -1,34 +1,37 @@
 #!/bin/bash
 set -euo pipefail
-# docker-build.sh
+# build.sh
 #
-# Builds the hydrorisk-api image (Julia + Datastore.jl + Hydrorisk.jl) and
+# Builds the hydrorisk-db image (Postgres + PostGIS + Datastore.jl) and
 # saves it into ../../deploy/images/ - docker-compose.yml is the only
 # supported way to actually run it (see docker/deploy/).
 
 SH_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
-IMAGE_NAME="hydrorisk-api"
+IMAGE_NAME="hydrorisk-db"
 DEPLOY_IMAGES_DIR="$SH_DIR/../../deploy/images"
 IMAGE_TAR="$DEPLOY_IMAGES_DIR/${IMAGE_NAME}.tar.gz"
 
-# prep-context.sh stages Datastore.jl + Hydrorisk.jl into .context/packages/
-# before building; always tear it down again, however the script ends.
+# prep-context.sh stages Datastore.jl into .context/packages/ before
+# building; always tear it down again, however the script ends.
 trap 'rm -rf "$SH_DIR/.context"' EXIT
 
 echo "Staging package sources (prep-context.sh)..."
 "$SH_DIR/prep-context.sh" || { echo "❌ prep-context.sh failed"; exit 1; }
 
-for pkg in "Datastore.jl" "wrap/Hydrorisk.jl"; do
-    if [ ! -f "$SH_DIR/.context/packages/$pkg/Project.toml" ]; then
-        echo "❌ .context/packages/$pkg is missing or empty after staging - aborting." >&2
-        exit 1
-    fi
-done
+if [ ! -f "$SH_DIR/.context/packages/Datastore.jl/Project.toml" ]; then
+    echo "❌ .context/packages/Datastore.jl is missing or empty after staging - aborting." >&2
+    exit 1
+fi
 
 mkdir -p "$DEPLOY_IMAGES_DIR"
 if [ -f "$IMAGE_TAR" ]; then
     echo "Image tarball already exists at: $IMAGE_TAR"
-    read -p "Delete it and continue? (y/N): " confirm
+    # HR_OVERWRITE (y/n) answers this up front - set by ../build-all.sh.
+    if [ -n "${HR_OVERWRITE:-}" ]; then
+        confirm="$HR_OVERWRITE"
+    else
+        read -p "Delete it and continue? (y/N): " confirm
+    fi
     if [[ "$confirm" =~ ^[Yy]$ ]]; then
         rm -f "$IMAGE_TAR" "$IMAGE_TAR.ids"
     else
@@ -41,19 +44,23 @@ fi
 # just its default behavior) so "no" clearly maps to disabling it, instead
 # of the double-negative "Use --no-cache? (y/N)".
 BUILD_ARGS=()
-read -p "Use --use-cache? (Y/n): " cache_input
+# HR_USE_CACHE (y/n) answers this up front - set by ../build-all.sh.
+if [ -n "${HR_USE_CACHE:-}" ]; then
+    cache_input="$HR_USE_CACHE"
+else
+    read -p "Use --use-cache? (Y/n): " cache_input
+fi
 if [[ "$cache_input" =~ ^[Nn]$ ]]; then
     BUILD_ARGS+=(--no-cache)
 fi
 
 export DOCKER_BUILDKIT=1
 
-# No --target needed: `runtime` is the Dockerfile's last stage, so a plain
-# build already produces it. Context is docker/ (one level up), not this
-# directory alone - Dockerfile COPYs the shared docker/unix/install/*.sh
-# directly (no per-service sync copy needed) alongside this service's own
-# api/.context/packages/ and api/entrypoint.sh, both prefixed
-# accordingly in the Dockerfile's COPY instructions.
+# Context is docker/ (one level up), not this directory alone - Dockerfile
+# COPYs the shared docker/unix/install/julia.sh directly (no per-service
+# sync copy needed) alongside this service's own db/.context/packages/ and
+# db/entrypoint.sh, both prefixed accordingly in the Dockerfile's COPY
+# instructions.
 echo "Building Docker image '$IMAGE_NAME'..."
 # "${arr[@]+"${arr[@]}"}" (not just "${arr[@]}") because macOS's default
 # bash (3.2) treats expanding an empty array as an unbound variable under
@@ -67,3 +74,5 @@ docker build "${BUILD_ARGS[@]+"${BUILD_ARGS[@]}"}" -f "$SH_DIR/Dockerfile" -t "$
 echo ""
 echo "✅ Ready: $IMAGE_TAR"
 echo "   docker/deploy/deploy.sh --reload loads it and starts the stack."
+echo "   Its first start restores docker/seed/hydrorisk.sql, if present"
+echo "   (see docker/seed/make-seed.sh)."

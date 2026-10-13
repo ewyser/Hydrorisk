@@ -22,8 +22,8 @@ set -euo pipefail
 # separate Windows version to keep in sync. Windows-only checks below are
 # guarded by is_wsl.
 #
-# Images themselves aren't built here - each service's own docker-build.sh
-# does that (see docker/container/{db,api,daemon}).
+# Images themselves aren't built here - each service's own build.sh
+# does that (see docker/container/{db,api,daemon}), or build-all.sh for all.
 
 SH_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 cd "$SH_DIR"
@@ -90,7 +90,7 @@ sync_images() {
     shopt -u nullglob
 
     if [ ${#tars[@]} -eq 0 ]; then
-        echo "❌ No .tar.gz/.tar files found in $images_dir - build the images first (docker/container/{db,api,daemon} each have their own docker-build.sh)." >&2
+        echo "❌ No .tar.gz/.tar files found in $images_dir - build the images first (docker/container/{db,api,daemon} each have their own build.sh, or run docker/container/build-all.sh)." >&2
         exit 1
     fi
 
@@ -124,7 +124,7 @@ sync_images() {
 
     for img in hydrorisk-db:latest hydrorisk-api:latest hydrorisk-daemon:runtime; do
         if ! docker image inspect "$img" >/dev/null 2>&1; then
-            echo "❌ $img is neither loaded nor in any images/*.tar(.gz) - build it first (docker/container/*/docker-build.sh)." >&2
+            echo "❌ $img is neither loaded nor in any images/*.tar(.gz) - build it first (docker/container/*/build.sh or build-all.sh)." >&2
             exit 1
         fi
     done

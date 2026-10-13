@@ -1,11 +1,11 @@
 # Topology layer only: references pre-built image tags (no `build:` block).
-# Build/save each image first with its own docker-build.sh (docker/db,
-# docker/api, docker/daemon) - this file just puts them on one network so
+# Build/save each image first with its own build.sh (or all at once with
+# docker/container/build-all.sh) - this file just puts them on one network so
 # they can address each other by service name instead of the
 # host.docker.internal workaround docker-run.sh uses standalone.
 #
 # Copy .env.example to .env (in this same directory) and fill it in before
-# running. Image tarballs built by each service's docker-build.sh land in
+# running. Image tarballs built by each service's build.sh land in
 # ./images/ - ./deploy.sh loads each one whose image is missing from (or
 # differs from) the local Docker daemon (./deploy.sh --reload forces all),
 # then starts the stack.

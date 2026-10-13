@@ -1,12 +1,12 @@
 @echo off
-rem docker-build.bat - Windows launcher for docker-build.sh, run through WSL
-rem (Docker Desktop on Windows runs on WSL 2 anyway). Usage: docker-build.bat
+rem build.bat - Windows launcher for build.sh, run through WSL
+rem (Docker Desktop on Windows runs on WSL 2 anyway). Usage: build.bat
 rem
-rem All logic lives in docker-build.sh (and prep-context.sh, which it calls) -
+rem All logic lives in build.sh (and prep-context.sh, which it calls) -
 rem this file only checks that WSL can run them, then hands over. "%~dp0."
 rem (not "%~dp0"): a trailing backslash before the closing quote would escape it.
 setlocal
-set "SCRIPT=docker-build.sh"
+set "SCRIPT=build.sh"
 
 wsl --exec bash -c "exit 0" >nul 2>&1
 if errorlevel 1 (

@@ -59,7 +59,7 @@ ENV OMPI_MCA_opal_warn_on_missing_libcuda=0
 # OsmotiC.jl/Manifest.toml). They are staged into the build context by
 # prep-context.sh, preserving that sibling layout so an offline
 # Pkg.instantiate() resolves the relative path-deps. The staging dir is
-# .context/ (hidden, transient - see prep-context.sh / docker-build.sh).
+# .context/ (hidden, transient - see prep-context.sh / build.sh).
 ENV PKGROOT=/home/packages
 ENV CORIUM=${PKGROOT}/cORIUm.jl
 ENV OSMOTIC=${PKGROOT}/OsmotiC.jl

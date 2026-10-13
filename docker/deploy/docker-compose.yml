@@ -1,0 +1,215 @@
+# Topology layer only: references pre-built image tags (no `build:` block).
+# Build/save each image first with its own docker-build.sh (docker/db,
+# docker/api, docker/daemon) - this file just puts them on one network so
+# they can address each other by service name instead of the
+# host.docker.internal workaround docker-run.sh uses standalone.
+#
+# Copy .env.example to .env (in this same directory) and fill it in before
+# running. Image tarballs built by each service's docker-build.sh land in
+# ./images/ - ./deploy.sh loads each one whose image is missing from (or
+# differs from) the local Docker daemon (./deploy.sh --reload forces all),
+# then starts the stack.
+#
+#   docker compose up -d                                  # db + api only
+#   docker compose --profile daemon up -d                 # + daemon on CPU
+#   docker compose --profile daemon-gpu up -d             # + daemon on GPU
+#   docker compose --profile daemon --profile daemon-gpu down   # stop all
+#
+# daemon comes in two variants with identical settings (the x-daemon block
+# below), both creating the same container, hydrorisk-daemon - run one:
+#   - daemon      (profile "daemon"): requests no GPU, so it runs on every
+#     host; on CPU (cORIUm.jl's backend selection falls back to CPU when
+#     CUDA.functional() is false - see cORIUm.jl/src/boot/needs/backend.jl).
+#   - daemon-gpu  (profile "daemon-gpu"): adds a GPU device request, the
+#     compose form of `docker run --gpus all`. Docker Desktop (Windows/WSL2)
+#     only gives a container the GPU through such a request -
+#     NVIDIA_VISIBLE_DEVICES alone does nothing there. But on a host without
+#     an NVIDIA GPU, Docker refuses to create a container that makes it
+#     ("could not select device driver") - hence two variants instead of
+#     one. deploy.sh / shell.sh pick daemon-gpu when `nvidia-smi -L` works.
+# Refer to the container by name (docker logs/exec hydrorisk-daemon) - that
+# works for either variant. Switching variants on one host: `down` first
+# (they share the container name).
+
+name: hydrorisk
+
+networks:
+  hydrorisk-net:
+    driver: bridge
+
+volumes:
+  # Postgres's data directory, as a Docker-managed volume (full name
+  # hydrorisk_db-data), not a host bind mount: on Docker Desktop for
+  # Windows a host-folder PGDATA fails Postgres's ownership/permission
+  # checks, and a live PGDATA inside a synced folder (e.g. Dropbox) risks
+  # corruption. Data moves between machines as a dump instead - see
+  # docker/seed/make-seed.sh and the ../seed mount below.
+  # Reset: docker compose --profile daemon --profile daemon-gpu down && docker volume rm hydrorisk_db-data
+  db-data:
+
+# daemon's settings, shared by its two variants (services daemon and
+# daemon-gpu below - see the header).
+x-daemon: &daemon
+  image: hydrorisk-daemon:runtime
+  container_name: hydrorisk-daemon
+  # The image's own CMD is an idle `bash` for interactive use
+  # (docker run -it ... bash) - under compose there's no TTY/open stdin,
+  # so that would read EOF immediately and exit right after entrypoint.sh's
+  # MPI/CUDA setup. daemon(self; ) (OsmotiC.jl/src/api/daemon.jl) is the
+  # actual long-running process - it polls the jobs table in db (through
+  # Datastore.jl) and dispatches work to a worker pool, analogous to
+  # api's Hydrorisk.start_server(...). `bash -lc` (not a plain argv list)
+  # so $OSMOTIC - set as an image ENV var in the Dockerfile - expands at
+  # container start.
+  #
+  # Caveat: daemon(;)'s shutdown path only catches InterruptException
+  # (Ctrl+C/SIGINT), not SIGTERM - what `docker stop`/`docker compose
+  # down` actually send. It will still be killed (Docker SIGKILLs after
+  # the stop grace period regardless), just without a clean job-queue/
+  # worker-pool shutdown first. Not fixed here - would need SIGTERM
+  # handling added in OsmotiC.jl itself.
+  #
+  # Output lands on the bind-mounted host volume below ($VOLUME_MOUNT)
+  # without anything wired here: cORIUm puts dump/ there
+  # (resolve_dump_dir in cORIUm.jl/src/home/program/workflow/cORE.jl), and
+  # OsmotiC's __init__ does the same for job/ and logs/ (resolve_sys_dir in
+  # OsmotiC.jl/src/boot/needs/utils.jl) - each falling back to its
+  # in-container default if the mount isn't writable.
+  command: ["bash", "-lc", "julia --project=$$OSMOTIC -e 'using OsmotiC, CUDA; daemon(OsmotiC.self; )'"]
+  environment:
+    HYDRORISK_DB_HOST: db
+    HYDRORISK_DB_PORT: "5432"
+    HYDRORISK_DB_USER: ${DB_USER:-postgres}
+    HYDRORISK_DB_NAME: ${DB_NAME:-hydrorisk}
+    PSWD_DB: ${POSTGRES_PASSWORD}
+    HYDRORISK_API: "false"
+    VOLUME_MOUNT: /mnt/output
+    # Only effective on a Linux host whose default Docker runtime is the
+    # NVIDIA one (nvidia-ctk runtime configure --set-as-default); elsewhere
+    # the GPU comes from daemon-gpu's device request.
+    NVIDIA_VISIBLE_DEVICES: all
+    NVIDIA_DRIVER_CAPABILITIES: compute,utility
+  volumes:
+    - ../volume/daemon-data:/mnt/output
+  networks:
+    - hydrorisk-net
+  depends_on:
+    db:
+      condition: service_healthy
+  # No TTY on purpose: daemon(;)'s status display only redraws in place
+  # (ANSI cursor codes, every tick) on a terminal - without one it prints
+  # a status block only when the status changes
+  # (OsmotiC.jl/src/api/daemon.jl), which is what log viewers that don't
+  # interpret cursor codes (Docker Desktop's Logs tab) need. A long-running
+  # daemon still accumulates those, so cap the log (~30 MB max).
+  logging:
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  db:
+    image: hydrorisk-db:latest
+    container_name: hydrorisk-db
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?no database password - run deploy.sh (or deploy.bat), which sets it in docker/deploy/.env}
+      # Same database name api/daemon use - Datastore's bootstrap and the
+      # first-start seed (seed-db.sh) both target it.
+      HYDRORISK_DB_NAME: ${DB_NAME:-hydrorisk}
+      # A missing/unreadable seed or failed restore on first start is fatal
+      # (see seed-db.sh) rather than silently leaving an empty database -
+      # deploy.sh refuses a first start without a seed anyway.
+      SEED_REQUIRED: "1"
+    # This machine only (QGIS, pgAdmin, ... on localhost:DB_HOST_PORT): the
+    # postgres superuser must not be reachable from the rest of the network.
+    # api/daemon reach the database over hydrorisk-net (host `db`), not
+    # through this port; other machines go through the API.
+    ports:
+      - "127.0.0.1:${DB_HOST_PORT:-5433}:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      # Only read on the very first start with a new (empty) db-data
+      # volume: if hydrorisk.sql is here, it becomes the initial database
+      # (see docker/container/db/seed-db.sh). deploy.sh can write it.
+      - ../seed:/seed:ro
+    networks:
+      - hydrorisk-net
+    healthcheck:
+      # -h localhost (TCP), not the default Unix socket: during first-start
+      # init (incl. seeding) Postgres only listens on the socket, so this
+      # keeps db "unhealthy" - and api/daemon waiting - until that's done.
+      test: ["CMD-SHELL", "pg_isready -U postgres -h localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      # Failures don't count during start_period, and the first success
+      # ends it early - generous so restoring a large seed dump fits.
+      start_period: 10m
+    restart: unless-stopped
+
+  api:
+    image: hydrorisk-api:latest
+    container_name: hydrorisk-api
+    environment:
+      HYDRORISK_DB_HOST: db
+      HYDRORISK_DB_PORT: "5432"
+      HYDRORISK_DB_USER: ${DB_USER:-postgres}
+      HYDRORISK_DB_NAME: ${DB_NAME:-hydrorisk}
+      PSWD_DB: ${POSTGRES_PASSWORD}
+      HYDRORISK_API: "true"
+      VOLUME_MOUNT: /mnt/output
+    # Hydrorisk.__init__ writes the QGIS plugin zip into $VOLUME_MOUNT
+    # (resolve_out_dir in Hydrorisk.jl/src/needs/utils.jl), so it lands on
+    # the host as volume/api-data/hydrorisk_plugin.zip - falling back to the
+    # in-container gis/ if the mount isn't writable.
+    volumes:
+      - ../volume/api-data:/mnt/output
+    ports:
+      # All interfaces on purpose: QGIS plugins on other machines of the
+      # local network connect to http://<this machine's IP>:API_HOST_PORT
+      # (deploy.sh prints it).
+      - "${API_HOST_PORT:-8001}:8000"
+    networks:
+      - hydrorisk-net
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      # Healthy once the server actually answers GET / with 200 - not just
+      # once the container runs, which is seconds before Julia has loaded
+      # Hydrorisk.jl and listens. GET / needs neither db nor auth (unlike
+      # /health). bash's /dev/tcp because the runtime image has no
+      # curl/wget. `docker compose up --wait` (deploy.sh) shows
+      # api as "Waiting" until this passes.
+      #
+      # Only until the first success: that writes /tmp/.api-up, and every
+      # later check just finds it and exits 0 - no more requests (each one
+      # would be logged by the api as "HTTP GET / -> 200"). The marker holds
+      # the start time of the container's main process (/proc/1/stat field
+      # 22), so after a crash-restart it no longer matches and the check
+      # probes again until the new process answers.
+      test: ["CMD", "bash", "-c", "s=$$(cut -d' ' -f22 /proc/1/stat); [ \"$$(cat /tmp/.api-up 2>/dev/null)\" = \"$$s\" ] && exit 0; exec 3<>/dev/tcp/127.0.0.1/8000 && printf 'GET / HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200 ' && echo \"$$s\" > /tmp/.api-up"]
+      interval: 3s
+      timeout: 5s
+      retries: 3
+      # Failures don't count while Julia loads; the first success ends it.
+      start_period: 5m
+    restart: unless-stopped
+
+  # daemon on CPU - runs on every host.
+  daemon:
+    <<: *daemon
+    profiles: ["daemon"]
+
+  # daemon with the GPU - only on hosts with a working NVIDIA GPU (see the
+  # header for why this is a separate variant).
+  daemon-gpu:
+    <<: *daemon
+    profiles: ["daemon-gpu"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

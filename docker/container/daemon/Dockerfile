@@ -1,0 +1,284 @@
+# ------------------------------------------------------
+# STAGE 1: BUILD TOOLCHAIN, JULIA, AND LIBRARIES
+# ------------------------------------------------------
+# CUDA toolkit 12.9: CUDA.jl uses this local toolkit's ptxas to compile GPU
+# kernels (see bake-prefs.jl), so it must know the target GPU's architecture.
+# Blackwell (RTX PRO 6000, RTX 50xx, B200: sm_100/sm_120) needs >= 12.8 -
+# with 12.5, ptxas fell back to sm_90 cubins that the driver refused to load
+# (empty-message error from CuModule on the first kernel launch). Keep it on
+# 12.x: CUDA.jl 5.11 + Julia 1.10 is pinned below. If you change it, update
+# CUDA_VERSION here AND in the runtime stage (ARG + CUDA_ROOT).
+FROM nvidia/cuda:12.9.1-devel-ubuntu22.04 AS toolchain
+
+# Arguments
+ARG CUDA_VERSION=12.9
+ARG OPENMPI_VERSION=4.1.6
+ARG HDF5_VERSION=1.14.3
+# Latest 1.10 LTS patch, not 1.10.5: Pkg in 1.10.5 falsely reports a circular dependency
+# through Atomix's AtomixCUDAExt (CUDA -> KernelAbstractions -> Atomix ->
+# AtomixCUDAExt -> CUDA) and silently skips precompiling CUDA, cORIUm and
+# OsmotiC - leaving them to compile at container start, where CUDA's
+# in-process compile fails ("__precompile__(false) is not allowed").
+# The Manifests' julia_version = "1.10.5" is fine: same minor version.
+ARG JULIA_VERSION=1.10.12
+
+# Environment variables (for runtime)
+ENV CUDA_ROOT=/usr/local/cuda-${CUDA_VERSION}
+ENV OPENMPI_PREFIX=/opt/openmpi-cuda
+ENV HDF5_PREFIX=/opt/hdf5-parallel
+ENV JULIA_PREFIX=/opt/julia
+
+# Install base dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    wget curl gnupg2 git ca-certificates software-properties-common \
+    build-essential gcc g++ gfortran make libnuma-dev libevent-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install OpenMPI with CUDA support
+COPY unix/install/openmpi.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/openmpi.sh && \
+    /usr/local/bin/openmpi.sh "$OPENMPI_VERSION" "$CUDA_ROOT" "$OPENMPI_PREFIX"
+
+# Install parallel HDF5 with OpenMPI
+COPY unix/install/hdf5.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/hdf5.sh && \
+    /usr/local/bin/hdf5.sh "$HDF5_VERSION" "$HDF5_PREFIX" "$OPENMPI_PREFIX"
+
+# Install Julia
+COPY unix/install/julia.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/julia.sh && \
+    /usr/local/bin/julia.sh "$JULIA_VERSION" "$JULIA_PREFIX"
+
+# Configure environment variables PATH and LD_LIBRARY_PATH + add julia
+ENV PATH=${JULIA_PREFIX}/bin:${HDF5_PREFIX}/bin:${OPENMPI_PREFIX}/bin:${CUDA_ROOT}/bin:$PATH
+ENV LD_LIBRARY_PATH=${HDF5_PREFIX}/lib:${OPENMPI_PREFIX}/lib:${CUDA_ROOT}/lib64:$LD_LIBRARY_PATH
+ENV OMPI_MCA_opal_warn_on_missing_libcuda=0
+
+# The daemon bundles two packages side by side: cORIUm.jl (the solver)
+# and OsmotiC.jl (which path-depends on ../cORIUm.jl and ../Datastore.jl - see
+# OsmotiC.jl/Manifest.toml). They are staged into the build context by
+# prep-context.sh, preserving that sibling layout so an offline
+# Pkg.instantiate() resolves the relative path-deps. The staging dir is
+# .context/ (hidden, transient - see prep-context.sh / docker-build.sh).
+ENV PKGROOT=/home/packages
+ENV CORIUM=${PKGROOT}/cORIUm.jl
+ENV OSMOTIC=${PKGROOT}/OsmotiC.jl
+ENV JULIA_PKG_PRECOMPILE_AUTO=no
+WORKDIR ${PKGROOT}
+
+# ------------------------------------------------------
+# STAGE 1b: DEPENDENCY RESOLUTION - cached on the staged package files' content
+# alone (the COPY below is content-hashed by Docker), so this expensive step
+# (Pkg.instantiate()/add("CUDA") downloads GBs of artifacts) only re-runs when
+# the staged packages actually change, not on every source edit. This replaces the old
+# CACHEBUST arg / git-clone `source` stage.
+#
+# The committed Manifest.toml of each package is kept on purpose: it is a
+# known-good resolve for Julia 1.10. `Pkg.add("CUDA")` then adds only CUDA on
+# top of it - pinned to an exact release here so rebuilds stay reproducible,
+# and that pin must sit within the [compat] section in cORIUm.jl/Project.toml
+# (CUDA "5.9", KernelAbstractions "0.9"). Without those bounds an
+# unconstrained resolve inside the container pulled Julia-1.11-only releases of
+# CUDA (CUDACore split -> `ptxas_path not defined`) and Atomix
+# (`__precompile__(false) is not allowed`) that fail to precompile. 5.9 is also
+# the floor: older CUDA.jl rejects host drivers for CUDA 13+ ("only supports
+# NVIDIA drivers for CUDA 11.x or 12.x") and falls back to the CPU.
+#
+# Atomic STORES (`@atomic A[i] = v`) cannot work in CUDA kernels on this stack -
+# don't try to fix it by upgrading Atomix: 1.1.x (resolved here) stubs them
+# (KernelException), and 1.2.1 emits a real atomic store that Julia 1.10's
+# LLVM 15 NVPTX backend can't select ("Cannot select: AtomicStore") - it
+# aborts the whole process. Kernels must use plain writes or atomic `+=`.
+#
+# Both projects share the default root depot (/root/.julia). OsmotiC also needs
+# CUDA (its cORIUm CUDAExt) - add it there too; the second add resolves against
+# the already-populated depot and is close to a no-op.
+#
+# NOTE: deliberately no separate Pkg.resolve() after Pkg.add("CUDA"). CUDA is
+# listed in both [deps] (added by Pkg.add) and [weakdeps] (from cORIUm's own
+# Project.toml, for the CUDAExt extension) - an explicit Pkg.resolve() strips
+# CUDA back out of the Manifest entirely, leaving `using CUDA` failing at
+# runtime. Pkg.add() already performs its own resolve - no extra call needed.
+FROM toolchain AS deps
+COPY daemon/.context/packages/ ${PKGROOT}/
+RUN julia --project=${CORIUM}  -e 'using Pkg; Pkg.instantiate(); Pkg.add(name="CUDA", version="5.11.3")'
+RUN julia --project=${OSMOTIC} -e 'using Pkg; Pkg.instantiate(); Pkg.add(name="CUDA", version="5.11.3")'
+
+# ------------------------------------------------------
+# STAGE 1c: BUILDER
+#
+# Deliberately NOT running Pkg.precompile() here: precompiling as root bakes
+# /root/.julia/... absolute source paths into the .ji cache files for staleness
+# checks. The runtime stage copies the depot to /home/mpiuser/.julia, but those
+# baked-in /root/... paths don't move with it - and since /root is 0700
+# root:root, mpiuser's stat() on them fails with EACCES (not a clean "missing,
+# recompile") the first time a package loads - a hard `ERROR: LoadError`. So
+# there is nothing safe to keep from a build-time precompile; the runtime stage
+# precompiles fresh as mpiuser instead, into mpiuser's own depot with correct
+# paths from the start.
+#
+# MPI/HDF5/CUDA preferences (LocalPreferences.toml) are baked in the runtime
+# stage, right before its precompile - see bake-prefs.jl.
+FROM deps AS builder
+
+# Trimmed CUDA toolkit for the runtime stage (/opt/cuda-slim, same layout as
+# ${CUDA_ROOT}). The full -devel toolkit is ~7.8 GB - nvcc, Nsight, NPP,
+# nvrtc, headers, docs and multi-GB *_static.a libraries - while CUDA.jl's
+# local-toolkit mode only uses what CUDA_Runtime_Discovery.__init__ looks up:
+#   binaries   ptxas, nvdisasm, nvlink
+#   libraries  cudart, cufft, cublas, cublasLt, cusparse, cusolver,
+#              cusolverMg, curand, nvvm, cupti, nvperf_host, nvperf_target
+#              (discovery also searches extras/CUPTI, but 12.9 ships CUPTI
+#              in targets/x86_64-linux/lib with the rest)
+#   files      libcudadevrt.a, nvvm/libdevice/libdevice.10.bc
+# plus nvJitLink, which cusparse/cusolver link against. That list is the
+# source of truth: if a CUDA.jl upgrade looks up more, add it here - the
+# runtime stage's discovery check fails the build until then.
+# `cp -a` keeps the libraries' version symlinks; a missing glob fails the
+# build here, and so does any library whose dependencies (other than the
+# driver's libcuda, injected at container start) didn't come along.
+RUN set -eu; \
+    src="${CUDA_ROOT}"; dst=/opt/cuda-slim; tlib=targets/x86_64-linux/lib; \
+    mkdir -p "$dst/bin" "$dst/$tlib" "$dst/nvvm/lib64"; \
+    cp -a "$src/bin/ptxas" "$src/bin/nvdisasm" "$src/bin/nvlink" "$dst/bin/"; \
+    for lib in cudart cufft cublas cublasLt cusparse cusolver cusolverMg curand nvJitLink cupti nvperf_host nvperf_target; do \
+        cp -a "$src/$tlib/lib$lib.so"* "$dst/$tlib/"; \
+    done; \
+    cp -a "$src/$tlib/libcudadevrt.a" "$dst/$tlib/"; \
+    ln -s "$tlib" "$dst/lib64"; \
+    cp -a "$src/nvvm/lib64/libnvvm.so"* "$dst/nvvm/lib64/"; \
+    cp -a "$src/nvvm/libdevice" "$dst/nvvm/"; \
+    if [ -f "$src/version.json" ]; then cp -a "$src/version.json" "$dst/"; fi; \
+    missing=$(for so in "$dst/$tlib"/*.so "$dst/nvvm/lib64"/*.so; do \
+        LD_LIBRARY_PATH="$dst/$tlib" ldd "$so" | grep 'not found' | grep -v 'libcuda\.so' | sed "s|^|$(basename "$so"): |"; \
+    done); \
+    if [ -n "$missing" ]; then echo "cuda-slim: unresolved libraries:"; echo "$missing"; exit 1; fi; \
+    du -sh "$src" "$dst"
+
+CMD ["bash"]
+
+# ------------------------------------------------------
+# STAGE 2: RUNTIME IMAGE
+# ------------------------------------------------------
+FROM ubuntu:22.04 AS runtime
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+ENV CUDA_ROOT=/usr/local/cuda-12.9
+ENV OPENMPI_PREFIX=/opt/openmpi-cuda
+ENV HDF5_PREFIX=/opt/hdf5-parallel
+ENV JULIA_DIR=/opt/julia
+ENV PATH=${CUDA_ROOT}/bin:${OPENMPI_PREFIX}/bin:${HDF5_PREFIX}/bin:${JULIA_DIR}/bin:${PATH}
+ENV LD_LIBRARY_PATH=${CUDA_ROOT}/lib64:${OPENMPI_PREFIX}/lib:${HDF5_PREFIX}/lib
+ENV PKGROOT=/home/mpiuser/packages
+ENV CORIUM=${PKGROOT}/cORIUm.jl
+ENV OSMOTIC=${PKGROOT}/OsmotiC.jl
+ENV HOME=/home/mpiuser
+# Silences OpenMPI's "libcuda.so.1: cannot open shared object file" warning
+# (repeated once per rank) when running without a GPU/driver present -
+# harmless, but noisy.
+ENV OMPI_MCA_opal_warn_on_missing_libcuda=0
+
+# MPI/CUDA/HDF5 configuration, baked into $CORIUM/LocalPreferences.toml at
+# build time by bake-prefs.jl (below) - all fixed paths/versions of this image,
+# no GPU needed. CORIUM_HDF5_LIB/CORIUM_HDF5_HL_LIB point HDF5.jl at this system parallel HDF5
+# (built against the same system OpenMPI above) instead of HDF5_jll's bundled
+# MPI-enabled artifact, which pulls in a *different* OpenMPI_jll binary that
+# collides with the system one on LD_LIBRARY_PATH (dlopen "undefined symbol:
+# ompi_instance_count").
+ENV CORIUM_MPIEXEC_PATH=${OPENMPI_PREFIX}/bin/mpiexec
+ENV CORIUM_HDF5_LIB=${HDF5_PREFIX}/lib/libhdf5.so
+ENV CORIUM_HDF5_HL_LIB=${HDF5_PREFIX}/lib/libhdf5_hl.so
+ARG CUDA_VERSION=12.9
+ENV CORIUM_CUDA_VERSION=${CUDA_VERSION}
+# Baked preferences differ per project (see bake-prefs.jl):
+#   --project=$CORIUM   MPI (system OpenMPI) + HDF5 (system parallel) + CUDA
+#   --project=$OSMOTIC  CUDA only
+# OsmotiC (the daemon) needs CUDA - it runs cORIUm on the GPU in-process - but
+# must keep the default MPI/HDF5: it never calls MPI.Init, and it pulls in
+# GDAL_jll, whose single Linux build links MPICH's libmpi.so.12 and so only
+# loads alongside the default (MPICH) MPI jlls. The system-OpenMPI preferences
+# (e.g. via stacking $CORIUM on JULIA_LOAD_PATH) break its precompile with
+# "libmpi.so.12: cannot open shared object file".
+# Build the precompile cache for several x86-64 generations (the same targets
+# as the official Julia binary's sysimage), not just the build machine's CPU.
+# Otherwise a deployment host with a different CPU rejects the whole cache and
+# recompiles everything at first `using`.
+ENV JULIA_CPU_TARGET="generic;sandybridge,-xsaveopt,clone_all;haswell,-rdrnd,base(1)"
+
+# Install runtime dependencies only. openssh-client provides `ssh`, which
+# OpenMPI's default process launcher (plm_rsh_agent) needs even for
+# same-node/single-container multi-rank runs. libsqlite3-0 is required by
+# GDAL_jll's bundled libproj.so, which links against sqlite3 for its
+# projection database - without it, precompiling GDAL/ArchGDAL (pulled in by
+# OsmotiC's Datastore.jl path-dep) fails with "libsqlite3.so.0: cannot open
+# shared object file".
+RUN apt-get update && apt-get install -y \
+    libnuma1 libhwloc15 libevent-2.1-7 openssh-client libsqlite3-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user
+RUN useradd -m mpiuser
+
+# Copy built software from builder stage - owned by mpiuser straight away
+# (COPY --chown). Do NOT go back to a separate `RUN chown -R` afterwards:
+# a layer that changes only ownership still stores a full copy of every file
+# it touches - it doubled this image (+10 GB: CUDA, Julia and the depot twice).
+COPY --chown=mpiuser:mpiuser --from=builder /opt/openmpi-cuda /opt/openmpi-cuda
+COPY --chown=mpiuser:mpiuser --from=builder /opt/hdf5-parallel /opt/hdf5-parallel
+COPY --chown=mpiuser:mpiuser --from=builder /opt/julia /opt/julia
+COPY --chown=mpiuser:mpiuser --from=builder /home/packages /home/mpiuser/packages
+
+# The CUDA toolkit (ptxas, libdevice, cuBLAS & co.) - this stage is plain
+# ubuntu:22.04, not the nvidia/cuda:...-devel image the builder stage uses.
+# --gpus all / the NVIDIA container runtime only injects driver libraries at
+# container start, not the toolkit - CUDA.jl still needs ptxas at runtime to
+# JIT-compile GPU kernels. Only the parts CUDA.jl uses: /opt/cuda-slim, see
+# the builder stage.
+COPY --chown=mpiuser:mpiuser --from=builder /opt/cuda-slim ${CUDA_ROOT}
+
+# The Julia package depot itself (installed packages + downloaded artifacts) -
+# built by Pkg.instantiate() in the deps stage under root's default depot,
+# /root/.julia. Without this, Project.toml/Manifest.toml describe what should be
+# installed, but nothing here actually is.
+COPY --chown=mpiuser:mpiuser --from=builder /root/.julia /home/mpiuser/.julia
+
+# Entrypoint: output-mount permissions, DB config, privilege drop
+COPY --chown=mpiuser:mpiuser --chmod=755 daemon/entrypoint.sh /home/mpiuser/entrypoint.sh
+COPY --chown=mpiuser:mpiuser --chmod=755 daemon/bake-prefs.jl /home/mpiuser/bake-prefs.jl
+
+# NOTE: the container deliberately starts as root so entrypoint.sh can make a
+# bind-mounted $VOLUME_MOUNT writable before dropping to mpiuser (via `runuser`)
+# for the actual workload. Do not add `USER mpiuser` back here - that
+# reintroduces the `mkdir("/mnt/output/dump"): EACCES` failure on root-owned
+# host mounts (Docker Desktop / virtiofs).
+WORKDIR ${CORIUM}
+
+# Precompile as mpiuser (ownership above is already fixed), not root, so the
+# .ji cache's baked-in absolute source paths point at /home/mpiuser/.julia/... -
+# where the depot actually lives at runtime - instead of /root/.julia/...,
+# which is 0700 root:root and made mpiuser's cache-staleness stat() calls fail
+# with EACCES. The first `using cORIUm` / `using OsmotiC` inside a delivered
+# container is then fast instead of a ~10+ min cold precompile. No GPU is needed
+# for this - CUDA.jl precompiles fine without one.
+#
+# Preferences are baked FIRST: they are compile-time preferences, so the cache
+# must be built against the exact values the container runs with, or every
+# start recompiles (and CUDA's in-process recompile fails - see bake-prefs.jl).
+RUN runuser -u mpiuser -- julia --project=${CORIUM}  /home/mpiuser/bake-prefs.jl
+RUN runuser -u mpiuser -- julia --project=${OSMOTIC} /home/mpiuser/bake-prefs.jl --cuda-only
+RUN runuser -u mpiuser -- julia --project=${CORIUM}  -e 'using Pkg; Pkg.precompile()'
+RUN runuser -u mpiuser -- julia --project=${OSMOTIC} -e 'using Pkg; Pkg.precompile()'
+
+# Fail the build, not the GPU host, if the trimmed toolkit (/opt/cuda-slim,
+# see the builder stage) misses something CUDA.jl looks up: discovery only
+# checks files, so it runs without a GPU. Otherwise CUDA.functional() would
+# just be false at run time and the daemon would quietly fall back to the CPU.
+RUN runuser -u mpiuser -- julia --project=${OSMOTIC} -e ' \
+    using UUIDs: UUID; \
+    D = Base.require(Base.PkgId(UUID("1af6417a-86b4-443c-805f-a4643ffb695f"), "CUDA_Runtime_Discovery")); \
+    D.is_available() || error("CUDA_Runtime_Discovery could not find the toolkit at $(ENV["CUDA_ROOT"]) - see the log above"); \
+    println("✅ CUDA toolkit found: ", D.cuda_version, " (ptxas: ", D.ptxas_path, ")")'
+
+ENTRYPOINT ["/home/mpiuser/entrypoint.sh"]
+CMD ["/bin/bash"]

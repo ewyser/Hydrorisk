@@ -86,9 +86,9 @@ if [ -f "$ENV_FILE" ]; then
 fi
 
 # MPI/CUDA/HDF5 preferences are baked into $CORIUM/LocalPreferences.toml, and
-# the CUDA one also into $OSMOTIC/LocalPreferences.toml, at build time (see
+# the CUDA one also into $DAEMON/LocalPreferences.toml, at build time (see
 # bake-prefs.jl) - the precompile cache is built against them, so there's
-# nothing to configure here by default. OsmotiC deliberately keeps the
+# nothing to configure here by default. Daemon (with OsmotiC) deliberately keeps the
 # default MPI setup (see the note next to CORIUM_CUDA_VERSION in the
 # Dockerfile).
 #

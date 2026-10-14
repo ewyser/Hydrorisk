@@ -3,7 +3,7 @@ set -euo pipefail
 
 # prep-context.sh
 #
-# Stages a minimal, sibling-layout-preserving copy of the three Julia packages
+# Stages a minimal, sibling-layout-preserving copy of the four Julia packages
 # that make up the daemon image into
 #   docker/daemon/.context/packages/<pkg>/
 # so that `docker build` (context = docker/daemon/) can COPY them.
@@ -12,16 +12,17 @@ set -euo pipefail
 #
 # Why staging: the real source trees carry multi-GB .git dirs (cORIUm.jl ~6G,
 # OsmotiC.jl ~1G) plus dump/ docs/ job/ logs/ test/ that the build never needs.
-# Why sibling layout: OsmotiC.jl/Manifest.toml pins its deps by RELATIVE path
-#   path = "../cORIUm.jl"  and  path = "../Datastore.jl"
-# so all three must sit side by side for Pkg.instantiate() to resolve offline.
+# Why sibling layout: Daemon.jl/Manifest.toml (the project the container runs)
+# pins its deps by RELATIVE path
+#   path = "../OsmotiC.jl", "../cORIUm.jl" and "../Datastore.jl"
+# so all four must sit side by side for Pkg.instantiate() to resolve offline.
 
 SH_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 # docker/daemon/ -> docker/ -> Hydrorisk/ -> git/  (holds the packages)
 GIT_ROOT=$( cd -- "$SH_DIR/../../../.." &> /dev/null && pwd )
 
 DEST="$SH_DIR/.context/packages"
-PACKAGES=("cORIUm.jl" "OsmotiC.jl" "Datastore.jl")
+PACKAGES=("cORIUm.jl" "OsmotiC.jl" "Datastore.jl" "Daemon.jl")
 
 # rsync filter: keep only what a dependency resolve / precompile needs.
 INCLUDES=(
@@ -73,10 +74,11 @@ for pkg in "${PACKAGES[@]}"; do
         echo "❌ $pkg staged without Project.toml" >&2
         exit 1
     fi
-    # Only the two projects the Dockerfile instantiates need their own
-    # Manifest. Datastore.jl is a path-dep of OsmotiC, resolved entirely from
-    # OsmotiC.jl/Manifest.toml - and its repo gitignores Manifest.toml, so a
-    # fresh clone has none.
+    # The projects the Dockerfile instantiates (cORIUm.jl, Daemon.jl) need their
+    # own Manifest; OsmotiC.jl's is checked too, as the reference Daemon.jl's
+    # was built from. Datastore.jl is a path-dep, resolved entirely from the
+    # others' Manifests - and its repo gitignores Manifest.toml, so a fresh
+    # clone has none.
     if [ "$pkg" != "Datastore.jl" ] && [ ! -f "$DEST/$pkg/Manifest.toml" ]; then
         echo "❌ $pkg staged without Manifest.toml" >&2
         exit 1

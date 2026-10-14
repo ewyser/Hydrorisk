@@ -54,15 +54,17 @@ ENV PATH=${JULIA_PREFIX}/bin:${HDF5_PREFIX}/bin:${OPENMPI_PREFIX}/bin:${CUDA_ROO
 ENV LD_LIBRARY_PATH=${HDF5_PREFIX}/lib:${OPENMPI_PREFIX}/lib:${CUDA_ROOT}/lib64:$LD_LIBRARY_PATH
 ENV OMPI_MCA_opal_warn_on_missing_libcuda=0
 
-# The daemon bundles two packages side by side: cORIUm.jl (the solver)
-# and OsmotiC.jl (which path-depends on ../cORIUm.jl and ../Datastore.jl - see
-# OsmotiC.jl/Manifest.toml). They are staged into the build context by
-# prep-context.sh, preserving that sibling layout so an offline
-# Pkg.instantiate() resolves the relative path-deps. The staging dir is
-# .context/ (hidden, transient - see prep-context.sh / build.sh).
+# The daemon bundles four packages side by side: cORIUm.jl (the solver),
+# OsmotiC.jl (the model), Datastore.jl (database access) and Daemon.jl (the job
+# service the container runs, which path-depends on ../OsmotiC.jl,
+# ../cORIUm.jl and ../Datastore.jl - see Daemon.jl/Manifest.toml). They are
+# staged into the build context by prep-context.sh, preserving that sibling
+# layout so an offline Pkg.instantiate() resolves the relative path-deps. The
+# staging dir is .context/ (hidden, transient - see prep-context.sh / build.sh).
 ENV PKGROOT=/home/packages
 ENV CORIUM=${PKGROOT}/cORIUm.jl
 ENV OSMOTIC=${PKGROOT}/OsmotiC.jl
+ENV DAEMON=${PKGROOT}/Daemon.jl
 ENV JULIA_PKG_PRECOMPILE_AUTO=no
 WORKDIR ${PKGROOT}
 
@@ -90,9 +92,9 @@ WORKDIR ${PKGROOT}
 # LLVM 15 NVPTX backend can't select ("Cannot select: AtomicStore") - it
 # aborts the whole process. Kernels must use plain writes or atomic `+=`.
 #
-# Both projects share the default root depot (/root/.julia). OsmotiC also needs
-# CUDA (its cORIUm CUDAExt) - add it there too; the second add resolves against
-# the already-populated depot and is close to a no-op.
+# Both projects share the default root depot (/root/.julia). Daemon also needs
+# CUDA (cORIUm's CUDAExt, through OsmotiC) - add it there too; the second add
+# resolves against the already-populated depot and is close to a no-op.
 #
 # NOTE: deliberately no separate Pkg.resolve() after Pkg.add("CUDA"). CUDA is
 # listed in both [deps] (added by Pkg.add) and [weakdeps] (from cORIUm's own
@@ -102,7 +104,7 @@ WORKDIR ${PKGROOT}
 FROM toolchain AS deps
 COPY daemon/.context/packages/ ${PKGROOT}/
 RUN julia --project=${CORIUM}  -e 'using Pkg; Pkg.instantiate(); Pkg.add(name="CUDA", version="5.11.3")'
-RUN julia --project=${OSMOTIC} -e 'using Pkg; Pkg.instantiate(); Pkg.add(name="CUDA", version="5.11.3")'
+RUN julia --project=${DAEMON}  -e 'using Pkg; Pkg.instantiate(); Pkg.add(name="CUDA", version="5.11.3")'
 
 # ------------------------------------------------------
 # STAGE 1c: BUILDER
@@ -173,6 +175,7 @@ ENV LD_LIBRARY_PATH=${CUDA_ROOT}/lib64:${OPENMPI_PREFIX}/lib:${HDF5_PREFIX}/lib
 ENV PKGROOT=/home/mpiuser/packages
 ENV CORIUM=${PKGROOT}/cORIUm.jl
 ENV OSMOTIC=${PKGROOT}/OsmotiC.jl
+ENV DAEMON=${PKGROOT}/Daemon.jl
 ENV HOME=/home/mpiuser
 # Silences OpenMPI's "libcuda.so.1: cannot open shared object file" warning
 # (repeated once per rank) when running without a GPU/driver present -
@@ -193,8 +196,8 @@ ARG CUDA_VERSION=12.9
 ENV CORIUM_CUDA_VERSION=${CUDA_VERSION}
 # Baked preferences differ per project (see bake-prefs.jl):
 #   --project=$CORIUM   MPI (system OpenMPI) + HDF5 (system parallel) + CUDA
-#   --project=$OSMOTIC  CUDA only
-# OsmotiC (the daemon) needs CUDA - it runs cORIUm on the GPU in-process - but
+#   --project=$DAEMON   CUDA only
+# Daemon (through OsmotiC) needs CUDA - it runs cORIUm on the GPU in-process - but
 # must keep the default MPI/HDF5: it never calls MPI.Init, and it pulls in
 # GDAL_jll, whose single Linux build links MPICH's libmpi.so.12 and so only
 # loads alongside the default (MPICH) MPI jlls. The system-OpenMPI preferences
@@ -258,7 +261,7 @@ WORKDIR ${CORIUM}
 # .ji cache's baked-in absolute source paths point at /home/mpiuser/.julia/... -
 # where the depot actually lives at runtime - instead of /root/.julia/...,
 # which is 0700 root:root and made mpiuser's cache-staleness stat() calls fail
-# with EACCES. The first `using cORIUm` / `using OsmotiC` inside a delivered
+# with EACCES. The first `using cORIUm` / `using Daemon` inside a delivered
 # container is then fast instead of a ~10+ min cold precompile. No GPU is needed
 # for this - CUDA.jl precompiles fine without one.
 #
@@ -266,15 +269,15 @@ WORKDIR ${CORIUM}
 # must be built against the exact values the container runs with, or every
 # start recompiles (and CUDA's in-process recompile fails - see bake-prefs.jl).
 RUN runuser -u mpiuser -- julia --project=${CORIUM}  /home/mpiuser/bake-prefs.jl
-RUN runuser -u mpiuser -- julia --project=${OSMOTIC} /home/mpiuser/bake-prefs.jl --cuda-only
+RUN runuser -u mpiuser -- julia --project=${DAEMON}  /home/mpiuser/bake-prefs.jl --cuda-only
 RUN runuser -u mpiuser -- julia --project=${CORIUM}  -e 'using Pkg; Pkg.precompile()'
-RUN runuser -u mpiuser -- julia --project=${OSMOTIC} -e 'using Pkg; Pkg.precompile()'
+RUN runuser -u mpiuser -- julia --project=${DAEMON}  -e 'using Pkg; Pkg.precompile()'
 
 # Fail the build, not the GPU host, if the trimmed toolkit (/opt/cuda-slim,
 # see the builder stage) misses something CUDA.jl looks up: discovery only
 # checks files, so it runs without a GPU. Otherwise CUDA.functional() would
 # just be false at run time and the daemon would quietly fall back to the CPU.
-RUN runuser -u mpiuser -- julia --project=${OSMOTIC} -e ' \
+RUN runuser -u mpiuser -- julia --project=${DAEMON}  -e ' \
     using UUIDs: UUID; \
     D = Base.require(Base.PkgId(UUID("1af6417a-86b4-443c-805f-a4643ffb695f"), "CUDA_Runtime_Discovery")); \
     D.is_available() || error("CUDA_Runtime_Discovery could not find the toolkit at $(ENV["CUDA_ROOT"]) - see the log above"); \

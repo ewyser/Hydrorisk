@@ -2,7 +2,7 @@
 
 Builds Docker images for three services:
 
-1. **daemon** — cORIUm.jl + OsmotiC.jl
+1. **daemon** — Daemon.jl (job service) + OsmotiC.jl + cORIUm.jl
 2. **db** — Datastore.jl
 3. **api** — Hydrorisk.jl
 

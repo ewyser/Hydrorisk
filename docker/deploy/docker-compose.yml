@@ -55,27 +55,27 @@ x-daemon: &daemon
   # The image's own CMD is an idle `bash` for interactive use
   # (docker run -it ... bash) - under compose there's no TTY/open stdin,
   # so that would read EOF immediately and exit right after entrypoint.sh's
-  # MPI/CUDA setup. daemon(self; ) (OsmotiC.jl/src/api/daemon.jl) is the
+  # MPI/CUDA setup. Daemon.run() (Daemon.jl/src/run.jl) is the
   # actual long-running process - it polls the jobs table in db (through
   # Datastore.jl) and dispatches work to a worker pool, analogous to
   # api's Hydrorisk.start_server(...). `bash -lc` (not a plain argv list)
-  # so $OSMOTIC - set as an image ENV var in the Dockerfile - expands at
+  # so $DAEMON - set as an image ENV var in the Dockerfile - expands at
   # container start.
   #
-  # Caveat: daemon(;)'s shutdown path only catches InterruptException
+  # Caveat: Daemon.run()'s shutdown path only catches InterruptException
   # (Ctrl+C/SIGINT), not SIGTERM - what `docker stop`/`docker compose
   # down` actually send. It will still be killed (Docker SIGKILLs after
   # the stop grace period regardless), just without a clean job-queue/
   # worker-pool shutdown first. Not fixed here - would need SIGTERM
-  # handling added in OsmotiC.jl itself.
+  # handling added in Daemon.jl itself.
   #
   # Output lands on the bind-mounted host volume below ($VOLUME_MOUNT)
   # without anything wired here: cORIUm puts dump/ there
   # (resolve_dump_dir in cORIUm.jl/src/home/program/workflow/cORE.jl), and
-  # OsmotiC's __init__ does the same for job/ and logs/ (resolve_sys_dir in
-  # OsmotiC.jl/src/boot/needs/utils.jl) - each falling back to its
-  # in-container default if the mount isn't writable.
-  command: ["bash", "-lc", "julia --project=$$OSMOTIC -e 'using OsmotiC, CUDA; daemon(OsmotiC.self; )'"]
+  # OsmotiC's __init__ does the same for job/, and Daemon.run() for logs/
+  # (both via resolve_sys_dir in OsmotiC.jl/src/boot/needs/utils.jl) - each
+  # falling back to its in-container default if the mount isn't writable.
+  command: ["bash", "-lc", "julia --project=$$DAEMON -e 'using Daemon, CUDA; Daemon.run()'"]
   environment:
     HYDRORISK_DB_HOST: db
     HYDRORISK_DB_PORT: "5432"
@@ -96,10 +96,10 @@ x-daemon: &daemon
   depends_on:
     db:
       condition: service_healthy
-  # No TTY on purpose: daemon(;)'s status display only redraws in place
+  # No TTY on purpose: Daemon.run()'s status display only redraws in place
   # (ANSI cursor codes, every tick) on a terminal - without one it prints
   # a status block only when the status changes
-  # (OsmotiC.jl/src/api/daemon.jl), which is what log viewers that don't
+  # (Daemon.jl/src/run.jl), which is what log viewers that don't
   # interpret cursor codes (Docker Desktop's Logs tab) need. A long-running
   # daemon still accumulates those, so cap the log (~30 MB max).
   logging:

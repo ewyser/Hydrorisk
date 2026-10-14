@@ -6,10 +6,10 @@
 # runs with. Two uses (see the Dockerfile's runtime stage):
 #
 #   julia --project=$CORIUM  bake-prefs.jl              MPI + HDF5 + CUDA
-#   julia --project=$OSMOTIC bake-prefs.jl --cuda-only  CUDA only
+#   julia --project=$DAEMON  bake-prefs.jl --cuda-only  CUDA only
 #
-# Why OsmotiC gets CUDA only: the daemon runs --project=$OSMOTIC and uses the
-# GPU through cORIUm in-process, so it needs the CUDA preference too - without
+# Why Daemon gets CUDA only: the daemon runs --project=$DAEMON and uses the
+# GPU through OsmotiC/cORIUm in-process, so it needs the CUDA preference too - without
 # it CUDA_Runtime_jll stays precompiled for `cuda = "none"` (no GPU at build
 # time) and CUDA.functional() is false: CPU fallback. But it must keep the
 # default MPI/HDF5: OsmotiC pulls in GDAL_jll, whose single Linux build links
@@ -66,7 +66,7 @@ end
 # CUDA.jl -> local toolkit at $CUDA_ROOT. Same string format as
 # CUDA.set_runtime_version!(v; local_toolkit=true). A preference only counts
 # in a project that lists the package: cORIUm.jl has CUDA_Runtime_jll in its
-# [extras]; for OsmotiC.jl this (uuid, name) form adds it there (in the
+# [extras]; for Daemon.jl this (uuid, name) form adds it there (in the
 # image's copy of its Project.toml).
 Preferences.set_preferences!((UUID("76a88914-d11a-5bdc-97e0-2f5a05c973a2"), "CUDA_Runtime_jll"),
     "version" => ENV["CORIUM_CUDA_VERSION"],

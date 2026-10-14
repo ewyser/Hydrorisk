@@ -36,7 +36,7 @@ fi
 
 SH_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 # Build context is this directory (docker/daemon/). prep-context.sh
-# stages cORIUm.jl + OsmotiC.jl + Datastore.jl into .context/packages/ first;
+# stages cORIUm.jl + OsmotiC.jl + Datastore.jl + Daemon.jl into .context/packages/ first;
 # the Dockerfile COPYs from there. That hidden staging dir is removed again
 # once the image is saved.
 # Always tear down the staging dir on exit, however the script ends (build
@@ -85,8 +85,8 @@ echo "Staging package sources (prep-context.sh)..."
 
 # Guard: the Dockerfile's `deps` stage does `COPY .context/packages/ ...`, which
 # fails obscurely ("/.context/packages: not found") if staging silently produced
-# nothing. Verify all three package trees landed before handing off to Docker.
-for pkg in cORIUm.jl OsmotiC.jl Datastore.jl; do
+# nothing. Verify all four package trees landed before handing off to Docker.
+for pkg in cORIUm.jl OsmotiC.jl Datastore.jl Daemon.jl; do
     if [ ! -f "$SH_DIR/.context/packages/$pkg/Project.toml" ]; then
         echo "❌ .context/packages/$pkg is missing or empty after staging - aborting."
         exit 1

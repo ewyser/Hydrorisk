@@ -4,7 +4,7 @@ Builds Docker images for three services:
 
 1. **daemon** — Daemon.jl (job service) + OsmotiC.jl + cORIUm.jl
 2. **db** — Datastore.jl
-3. **api** — Hydrorisk.jl
+3. **api** — Gateway.jl (REST API, ships the QGIS plugin)
 
 All source packages live side-by-side in the parent directory (`git/cORIUm.jl`,
 `git/OsmotiC.jl`, `git/Datastore.jl`, ...). Docker builds consume **local copies**

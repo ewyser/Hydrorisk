@@ -42,14 +42,14 @@ fi
 
 # --- database configuration -------------------------------------------
 # OsmotiC.__init__ -> Datastore.load_env!(nothing) reads the DB settings
-# from six env vars (PSWD_DB, HYDRORISK_DB_HOST/PORT/USER/NAME,
+# from six env vars (HYDRORISK_DB_PASSWORD, HYDRORISK_DB_HOST/PORT/USER/NAME,
 # HYDRORISK_API). It never looks for a config file on its own here, and if
 # *all six* are unset it drops into an interactive readline() prompt that
 # hangs a no-TTY container. So the connection details must arrive as
 # environment.
 #
 # Nothing secret is baked into the image. Provide the details at run time,
-# either directly (`docker run -e PSWD_DB=... -e HYDRORISK_DB_HOST=...`) or
+# either directly (`docker run -e HYDRORISK_DB_PASSWORD=... -e HYDRORISK_DB_HOST=...`) or
 # by bind-mounting the db-config.toml you already keep for local use:
 #   docker run -v /host/path/env:/config:ro ...
 # and this block translates it. Its layout (unchanged from Datastore's
@@ -77,12 +77,12 @@ if [ -f "$ENV_FILE" ]; then
         local v; v="$(_toml_get "$2")"
         [ -n "$v" ] && export "$1=$v"
     }
-    _set_missing PSWD_DB           password
-    _set_missing HYDRORISK_DB_HOST host
-    _set_missing HYDRORISK_DB_PORT port
-    _set_missing HYDRORISK_DB_USER user
-    _set_missing HYDRORISK_DB_NAME name
-    _set_missing HYDRORISK_API     api
+    _set_missing HYDRORISK_DB_PASSWORD password
+    _set_missing HYDRORISK_DB_HOST     host
+    _set_missing HYDRORISK_DB_PORT     port
+    _set_missing HYDRORISK_DB_USER     user
+    _set_missing HYDRORISK_DB_NAME     name
+    _set_missing HYDRORISK_API         api
 fi
 
 # MPI/CUDA/HDF5 preferences are baked into $CORIUM/LocalPreferences.toml, and

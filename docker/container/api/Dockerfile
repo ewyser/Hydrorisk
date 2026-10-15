@@ -1,5 +1,5 @@
 # ------------------------------------------------------
-# STAGE 1: TOOLCHAIN - Julia only. Hydrorisk.jl is an Oxygen/HTTP API server
+# STAGE 1: TOOLCHAIN - Julia only. Gateway.jl is an Oxygen/HTTP API server
 # with a Datastore.jl path-dep; no CUDA/OpenMPI/parallel-HDF5 needed.
 # ------------------------------------------------------
 FROM ubuntu:22.04 AS toolchain
@@ -10,7 +10,7 @@ ARG JULIA_VERSION=1.10.12
 ENV DEBIAN_FRONTEND=noninteractive
 ENV JULIA_PREFIX=/opt/julia
 
-# zip is required at runtime: Hydrorisk.__init__ -> build_plugin() zips
+# zip is required at runtime: Gateway.__init__ -> build_plugin() zips
 # gis/hydrorisk_plugin/ into gis/hydrorisk_plugin.zip on every module load.
 # libsqlite3-0 is required by GDAL_jll's bundled libproj.so, which links
 # against sqlite3 for its projection database - without it, precompiling
@@ -26,21 +26,21 @@ RUN chmod +x /usr/local/bin/julia.sh && \
 ENV PATH=${JULIA_PREFIX}/bin:$PATH
 ENV PKGROOT=/home/packages
 ENV DATASTORE=${PKGROOT}/Datastore.jl
-ENV HYDRORISK=${PKGROOT}/wrap/Hydrorisk.jl
+ENV GATEWAY=${PKGROOT}/Gateway.jl
 ENV JULIA_PKG_PRECOMPILE_AUTO=no
 WORKDIR ${PKGROOT}
 
 # ------------------------------------------------------
 # STAGE 2: DEPENDENCY RESOLUTION - cached on the staged packages' content
-# alone. Only Hydrorisk.jl is instantiated: it's the only project the api
-# runs. Datastore.jl is its path-dep (../../Datastore.jl - the sibling layout
-# staged by prep-context.sh and copied here), and Hydrorisk.jl's Manifest
+# alone. Only Gateway.jl is instantiated: it's the only project the api
+# runs. Datastore.jl is its path-dep (../Datastore.jl - the sibling layout
+# staged by prep-context.sh and copied here), and Gateway.jl's Manifest
 # already pins all of Datastore's dependencies, so Datastore needs neither
 # its own instantiate nor its own Manifest.toml (its repo gitignores it).
 # ------------------------------------------------------
 FROM toolchain AS deps
 COPY api/.context/packages/ ${PKGROOT}/
-RUN julia --project=${HYDRORISK} -e 'using Pkg; Pkg.instantiate()'
+RUN julia --project=${GATEWAY} -e 'using Pkg; Pkg.instantiate()'
 
 # ------------------------------------------------------
 # STAGE 3: BUILDER
@@ -55,7 +55,7 @@ FROM ubuntu:22.04 AS runtime
 
 ENV DEBIAN_FRONTEND=noninteractive
 # libsqlite3-0 needed here too - GDAL_jll's libproj.so is dlopen'd again at
-# runtime (Hydrorisk.jl's own GDAL/ArchGDAL usage), not just during the
+# runtime (Gateway.jl's own GDAL/ArchGDAL usage), not just during the
 # precompile step above.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     zip ca-certificates libsqlite3-0 \
@@ -65,7 +65,7 @@ ENV JULIA_DIR=/opt/julia
 ENV PATH=${JULIA_DIR}/bin:${PATH}
 ENV PKGROOT=/home/apiuser/packages
 ENV DATASTORE=${PKGROOT}/Datastore.jl
-ENV HYDRORISK=${PKGROOT}/wrap/Hydrorisk.jl
+ENV GATEWAY=${PKGROOT}/Gateway.jl
 ENV HOME=/home/apiuser
 # Build the precompile cache for several x86-64 generations (the same targets
 # as the official Julia binary's sysimage, and as the daemon image), not just
@@ -84,7 +84,7 @@ COPY api/entrypoint.sh /home/apiuser/entrypoint.sh
 RUN chmod +x /home/apiuser/entrypoint.sh && \
     chown -R apiuser:apiuser /opt /home/apiuser
 
-# Hydrorisk.__init__ creates jobs/ and files/ under its own package root at
+# Gateway.__init__ creates jobs/ and files/ under its own package root at
 # every module load, and writes the QGIS plugin zip to $VOLUME_MOUNT (the
 # host bind mount, see docker-compose.yml) - or to gis/ in the package root
 # when nothing writable is mounted there. So the package root - not just the
@@ -95,11 +95,11 @@ RUN chmod +x /home/apiuser/entrypoint.sh && \
 # bind-mounted $VOLUME_MOUNT writable, then drops to apiuser (via `runuser`)
 # for the server. Do not add `USER apiuser` back here - build-time steps run
 # as apiuser through runuser instead.
-WORKDIR ${HYDRORISK}
+WORKDIR ${GATEWAY}
 
-# Precompiles Datastore.jl too, as Hydrorisk.jl's dependency.
-RUN runuser -u apiuser -- julia --project=${HYDRORISK} -e 'using Pkg; Pkg.precompile()'
+# Precompiles Datastore.jl too, as Gateway.jl's dependency.
+RUN runuser -u apiuser -- julia --project=${GATEWAY} -e 'using Pkg; Pkg.precompile()'
 
 EXPOSE 8000
 ENTRYPOINT ["/home/apiuser/entrypoint.sh"]
-CMD ["julia", "--project=/home/apiuser/packages/wrap/Hydrorisk.jl", "-e", "using Hydrorisk; Hydrorisk.start_server(port=8000, host=\"0.0.0.0\", cli=false)"]
+CMD ["julia", "--project=/home/apiuser/packages/Gateway.jl", "-e", "using Gateway; Gateway.start_server(port=8000, host=\"0.0.0.0\", cli=false)"]

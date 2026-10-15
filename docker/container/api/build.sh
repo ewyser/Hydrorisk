@@ -2,7 +2,7 @@
 set -euo pipefail
 # build.sh
 #
-# Builds the hydrorisk-api image (Julia + Datastore.jl + Hydrorisk.jl) and
+# Builds the hydrorisk-api image (Julia + Datastore.jl + Gateway.jl) and
 # saves it into ../../deploy/images/ - docker-compose.yml is the only
 # supported way to actually run it (see docker/deploy/).
 
@@ -11,14 +11,14 @@ IMAGE_NAME="hydrorisk-api"
 DEPLOY_IMAGES_DIR="$SH_DIR/../../deploy/images"
 IMAGE_TAR="$DEPLOY_IMAGES_DIR/${IMAGE_NAME}.tar.gz"
 
-# prep-context.sh stages Datastore.jl + Hydrorisk.jl into .context/packages/
+# prep-context.sh stages Datastore.jl + Gateway.jl into .context/packages/
 # before building; always tear it down again, however the script ends.
 trap 'rm -rf "$SH_DIR/.context"' EXIT
 
 echo "Staging package sources (prep-context.sh)..."
 "$SH_DIR/prep-context.sh" || { echo "❌ prep-context.sh failed"; exit 1; }
 
-for pkg in "Datastore.jl" "wrap/Hydrorisk.jl"; do
+for pkg in "Datastore.jl" "Gateway.jl"; do
     if [ ! -f "$SH_DIR/.context/packages/$pkg/Project.toml" ]; then
         echo "❌ .context/packages/$pkg is missing or empty after staging - aborting." >&2
         exit 1

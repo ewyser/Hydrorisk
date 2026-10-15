@@ -5,13 +5,13 @@ set -euo pipefail
 # The server runs as the unprivileged "apiuser". A host directory
 # bind-mounted at $VOLUME_MOUNT (docker-compose.yml: ../volume/api-data)
 # lands owned by root:root on Linux and is not writable by apiuser - then
-# Hydrorisk.__init__ would keep the QGIS plugin zip inside the container.
+# Gateway.__init__ would keep the QGIS plugin zip inside the container.
 #
 # Fix it while we still can: the container *starts* as root (no
 # `USER apiuser` in the Dockerfile), makes the mount writable, then drops
 # to apiuser for everything else - same as the daemon's entrypoint. Each
 # step is failure-tolerant; on mount backends that ignore chown/chmod
-# (virtiofs for Windows drives) Hydrorisk's resolve_out_dir() falls back
+# (virtiofs for Windows drives) Gateway's resolve_out_dir() falls back
 # to the in-package gis/ directory rather than crashing.
 if [ "$(id -u)" = "0" ]; then
     mount_dir="${VOLUME_MOUNT:-}"
@@ -34,14 +34,14 @@ if [ "$(id -u)" = "0" ]; then
 fi
 
 # --- database configuration -------------------------------------------
-# Datastore.load_env!(nothing) reads DB settings from six env vars (PSWD_DB,
+# Datastore.load_env!(nothing) reads DB settings from six env vars (HYDRORISK_DB_PASSWORD,
 # HYDRORISK_DB_HOST/PORT/USER/NAME, HYDRORISK_API). It never looks for a
 # config file on its own, and if *all six* are unset it drops into an
 # interactive readline() prompt that hangs a no-TTY container. So the
 # connection details must arrive as environment.
 #
 # Nothing secret is baked into the image. Provide the details at run time,
-# either directly (`docker run -e PSWD_DB=... -e HYDRORISK_DB_HOST=...`) or
+# either directly (`docker run -e HYDRORISK_DB_PASSWORD=... -e HYDRORISK_DB_HOST=...`) or
 # by bind-mounting the db-config.toml you already keep for local use:
 #   docker run -v /host/path/env:/config:ro ...
 # and this block translates it. Its layout (unchanged from Datastore's
@@ -65,12 +65,12 @@ if [ -f "$ENV_FILE" ]; then
         local v; v="$(_toml_get "$2")"
         [ -n "$v" ] && export "$1=$v"
     }
-    _set_missing PSWD_DB           password
-    _set_missing HYDRORISK_DB_HOST host
-    _set_missing HYDRORISK_DB_PORT port
-    _set_missing HYDRORISK_DB_USER user
-    _set_missing HYDRORISK_DB_NAME name
-    _set_missing HYDRORISK_API     api
+    _set_missing HYDRORISK_DB_PASSWORD password
+    _set_missing HYDRORISK_DB_HOST     host
+    _set_missing HYDRORISK_DB_PORT     port
+    _set_missing HYDRORISK_DB_USER     user
+    _set_missing HYDRORISK_DB_NAME     name
+    _set_missing HYDRORISK_API         api
 fi
 
 exec "$@"

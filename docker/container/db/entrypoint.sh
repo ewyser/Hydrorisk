@@ -15,7 +15,7 @@ if [ -f "$SEED_FAILED_MARKER" ]; then
     exit 1
 fi
 
-# Datastore.get_db()/load_env! reads six ENV vars (PSWD_DB,
+# Datastore.get_db()/load_env! reads six ENV vars (HYDRORISK_DB_PASSWORD,
 # HYDRORISK_DB_HOST/PORT/USER/NAME, HYDRORISK_API) and drops into an
 # interactive readline() prompt if *none* are set - fatal in a container.
 # Mirror host/port/user from Postgres's *actual* runtime config (whatever
@@ -47,7 +47,7 @@ fi
     echo "export HYDRORISK_DB_USER=${POSTGRES_USER:-postgres}"
     echo "export HYDRORISK_DB_NAME=${HYDRORISK_DB_NAME:-hydrorisk}"
     echo "export HYDRORISK_API=true"
-    echo "export PSWD_DB=${POSTGRES_PASSWORD}"
+    echo "export HYDRORISK_DB_PASSWORD=${POSTGRES_PASSWORD}"
 } > /home/packages/hydrorisk.env
 chmod 644 /home/packages/hydrorisk.env
 source /home/packages/hydrorisk.env

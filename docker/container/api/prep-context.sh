@@ -3,23 +3,21 @@ set -euo pipefail
 
 # prep-context.sh
 #
-# Stages Datastore.jl and Hydrorisk.jl into docker/api/.context/packages/,
-# preserving Hydrorisk.jl/Manifest.toml's RELATIVE path-dep:
-#   path = "../../Datastore.jl"
-# (two levels, because in the real source tree Hydrorisk.jl lives nested one
-# extra level inside crealp-hydrorisk/). To reproduce that same relative
-# distance here, Hydrorisk.jl is staged one level deeper than Datastore.jl:
+# Stages Datastore.jl and Gateway.jl into docker/api/.context/packages/, side
+# by side as in the source tree, preserving Gateway.jl/Manifest.toml's
+# RELATIVE path-dep:
+#   path = "../Datastore.jl"
 #
 #   .context/packages/Datastore.jl/
-#   .context/packages/wrap/Hydrorisk.jl/   (../.. from here == .context/packages/)
+#   .context/packages/Gateway.jl/
 #
-# Also stages gis/ (Hydrorisk.__init__ calls build_plugin(), which zips
-# gis/hydrorisk_plugin/ on module load - without it `using Hydrorisk` fails).
+# Also stages gis/ (Gateway.__init__ calls build_plugin(), which zips
+# gis/hydrorisk_plugin/ on module load - without it `using Gateway` fails).
 
 SH_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 # docker/api/ -> docker/ -> Hydrorisk/ -> git/  (holds Datastore.jl)
 GIT_ROOT=$( cd -- "$SH_DIR/../../../.." &> /dev/null && pwd )
-HYDRORISK_JL_SRC="$GIT_ROOT/crealp-hydrorisk/Hydrorisk.jl"
+GATEWAY_SRC="$GIT_ROOT/Gateway.jl"
 
 DEST="$SH_DIR/.context/packages"
 
@@ -52,34 +50,34 @@ EXCLUDES=(
 
 echo "GIT_ROOT: $GIT_ROOT"
 rm -rf "$SH_DIR/context" "$SH_DIR/.context"
-mkdir -p "$DEST/wrap"
+mkdir -p "$DEST"
 
 if [ ! -d "$GIT_ROOT/Datastore.jl" ]; then
     echo "❌ source package not found: $GIT_ROOT/Datastore.jl" >&2
     exit 1
 fi
-if [ ! -d "$HYDRORISK_JL_SRC" ]; then
-    echo "❌ source package not found: $HYDRORISK_JL_SRC" >&2
+if [ ! -d "$GATEWAY_SRC" ]; then
+    echo "❌ source package not found: $GATEWAY_SRC" >&2
     exit 1
 fi
 
 echo "→ staging Datastore.jl"
 rsync -a --delete "${PRE_EXCLUDES[@]}" "${INCLUDES[@]}" "${EXCLUDES[@]}" "$GIT_ROOT/Datastore.jl/" "$DEST/Datastore.jl/"
 
-echo "→ staging Hydrorisk.jl"
-rsync -a --delete "${PRE_EXCLUDES[@]}" "${INCLUDES[@]}" "${EXCLUDES[@]}" "$HYDRORISK_JL_SRC/" "$DEST/wrap/Hydrorisk.jl/"
+echo "→ staging Gateway.jl"
+rsync -a --delete "${PRE_EXCLUDES[@]}" "${INCLUDES[@]}" "${EXCLUDES[@]}" "$GATEWAY_SRC/" "$DEST/Gateway.jl/"
 
-for pkg in "Datastore.jl" "wrap/Hydrorisk.jl"; do
+for pkg in "Datastore.jl" "Gateway.jl"; do
     if [ ! -f "$DEST/$pkg/Project.toml" ]; then
         echo "❌ $pkg staged without Project.toml" >&2
         exit 1
     fi
 done
-# Only Hydrorisk.jl is instantiated (see the Dockerfile's deps stage), so only
-# it needs a Manifest. Datastore.jl is resolved through Hydrorisk.jl's Manifest
+# Only Gateway.jl is instantiated (see the Dockerfile's deps stage), so only
+# it needs a Manifest. Datastore.jl is resolved through Gateway.jl's Manifest
 # - and its repo gitignores Manifest.toml, so a fresh clone has none.
-if [ ! -f "$DEST/wrap/Hydrorisk.jl/Manifest.toml" ]; then
-    echo "❌ wrap/Hydrorisk.jl staged without Manifest.toml" >&2
+if [ ! -f "$DEST/Gateway.jl/Manifest.toml" ]; then
+    echo "❌ Gateway.jl staged without Manifest.toml" >&2
     exit 1
 fi
 

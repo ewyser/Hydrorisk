@@ -32,8 +32,15 @@ if [ "$(id -u)" = "0" ]; then
         fi
     fi
     # Drop to the unprivileged user for the actual workload (OpenMPI refuses
-    # to run as root). Prefer runuser (util-linux); fall back to su.
-    if command -v runuser >/dev/null 2>&1; then
+    # to run as root). Prefer setpriv (util-linux): it switches user and
+    # execs, so the workload stays PID 1 and receives docker stop's SIGTERM
+    # itself. runuser and su stay as parents instead: on SIGTERM they pass it
+    # on, then kill their child after 2 s - cutting the daemon's shutdown
+    # short (see run-daemon.sh).
+    if command -v setpriv >/dev/null 2>&1; then
+        exec setpriv --reuid=mpiuser --regid=mpiuser --init-groups \
+            env HOME=/home/mpiuser USER=mpiuser LOGNAME=mpiuser "$0" "$@"
+    elif command -v runuser >/dev/null 2>&1; then
         exec runuser -u mpiuser -- "$0" "$@"
     else
         exec su mpiuser -s /bin/bash -c 'exec "$@"' bash "$0" "$@"

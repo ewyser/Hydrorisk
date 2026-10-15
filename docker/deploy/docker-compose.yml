@@ -62,12 +62,12 @@ x-daemon: &daemon
   # so $DAEMON - set as an image ENV var in the Dockerfile - expands at
   # container start.
   #
-  # Caveat: Daemon.run()'s shutdown path only catches InterruptException
-  # (Ctrl+C/SIGINT), not SIGTERM - what `docker stop`/`docker compose
-  # down` actually send. It will still be killed (Docker SIGKILLs after
-  # the stop grace period regardless), just without a clean job-queue/
-  # worker-pool shutdown first. Not fixed here - would need SIGTERM
-  # handling added in Daemon.jl itself.
+  # Stopping: `docker stop`/`docker compose stop` send SIGTERM, which
+  # Julia does not handle (it would die at once). run-daemon.sh turns it
+  # into SIGINT for Julia, and Daemon.run() shuts down cleanly: running
+  # jobs marked failed, claimed ones given back to the queue, workers
+  # removed. stop_grace_period leaves it the time to, before Docker
+  # SIGKILLs the container.
   #
   # Output lands on the bind-mounted host volume below ($VOLUME_MOUNT)
   # without anything wired here: cORIUm puts dump/ there
@@ -75,7 +75,8 @@ x-daemon: &daemon
   # OsmotiC's __init__ does the same for job/, and Daemon.run() for logs/
   # (both via resolve_sys_dir in OsmotiC.jl/src/boot/needs/utils.jl) - each
   # falling back to its in-container default if the mount isn't writable.
-  command: ["bash", "-lc", "julia --project=$$DAEMON -e 'using Daemon, CUDA; Daemon.run()'"]
+  command: ["bash", "-lc", "exec /home/mpiuser/run-daemon.sh julia --project=$$DAEMON -e 'using Daemon, CUDA; Daemon.run()'"]
+  stop_grace_period: 60s
   environment:
     HYDRORISK_DB_HOST: db
     HYDRORISK_DB_PORT: "5432"

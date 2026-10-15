@@ -249,6 +249,8 @@ COPY --chown=mpiuser:mpiuser --from=builder /root/.julia /home/mpiuser/.julia
 # Entrypoint: output-mount permissions, DB config, privilege drop
 COPY --chown=mpiuser:mpiuser --chmod=755 daemon/entrypoint.sh /home/mpiuser/entrypoint.sh
 COPY --chown=mpiuser:mpiuser --chmod=755 daemon/bake-prefs.jl /home/mpiuser/bake-prefs.jl
+# Turns docker stop's SIGTERM into SIGINT for the daemon (see the script)
+COPY --chown=mpiuser:mpiuser --chmod=755 daemon/run-daemon.sh /home/mpiuser/run-daemon.sh
 
 # NOTE: the container deliberately starts as root so entrypoint.sh can make a
 # bind-mounted $VOLUME_MOUNT writable before dropping to mpiuser (via `runuser`)

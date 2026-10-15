@@ -71,14 +71,19 @@ The daemon records each task's status and progress in the database.
 [OsmotiC: workflow](hydrorisk://osmotic/workflow/) ·
 [cORIUm: input file format](hydrorisk://corium/input_format/)
 
-## 4. Following, aborting, resubmitting
+## 4. Following, pausing, aborting, resubmitting
 
 The plugin's **Job Monitor** follows the jobs live (server-sent events from
-Gateway, which reads the status the daemon writes). An abort reaches the
-running worker through the database and stops it at its next checkpoint; a
-resubmitted job re-runs only the tasks that did not complete.
+Gateway, which reads the status the daemon writes). A pause or an abort
+reaches the running worker through the database and stops it within a couple
+of seconds, between two solver time steps. A **paused** job frees its worker
+and keeps its state — cORIUm saves it, OsmotiC records where the run stopped —
+so **Resume** continues where it stopped. A resubmitted job re-runs only the
+tasks that did not complete, from their start.
 
-→ [Daemon: job lifecycle](hydrorisk://daemon/job_lifecycle/)
+→ [Daemon: job lifecycle](hydrorisk://daemon/job_lifecycle/) ·
+[OsmotiC: pause and resume](hydrorisk://osmotic/workflow/#Pause-and-resume) ·
+[cORIUm: stopping a run](hydrorisk://corium/functions/public_api/#Stopping-a-run-and-continuing-it)
 
 ## 5. Results out
 

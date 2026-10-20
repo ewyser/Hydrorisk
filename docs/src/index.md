@@ -13,21 +13,13 @@ switches between them, and the search covers them all.
 
 ```mermaid
 flowchart LR
-    plugin["QGIS plugin"]
-    gateway["Gateway<br/>REST API"]
-    db[("PostgreSQL / PostGIS")]
-    daemon["Daemon<br/>job service"]
-    osmotic["OsmotiC<br/>prepare · execute · post"]
-    corium["cORIUm<br/>solver"]
-    datastore["Datastore<br/>data layer"]
-
-    plugin -- "HTTP" --> gateway
-    gateway --> datastore
-    daemon --> datastore
-    osmotic --> datastore
-    datastore --> db
-    daemon -- "runs jobs" --> osmotic
-    osmotic -- "simulates" --> corium
+    plugin["QGIS plugin"] -- HTTP <--> gateway["Gateway.jl<br>REST API"]
+    gateway <--> datastore["Datastore.jl<br>data layer"]
+    daemon["Daemon.jl<br>job service"] --> datastore
+    osmotic["OsmotiC.jl<br>data ingestion"] <--> datastore
+    datastore --> db[("PostgreSQL")]
+    daemon -- runs jobs --> osmotic
+    osmotic -- simulates <--> corium["cORIUm.jl<br>compute engine"]
 ```
 
 | Component | Role | Documentation |

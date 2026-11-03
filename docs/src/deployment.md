@@ -14,7 +14,7 @@ docker/
 ├── deploy/           docker-compose.yml, deploy.sh, .env, images/ (the tarballs)
 ├── seed/             make-seed.sh, and hydrorisk.sql: the initial database
 └── volume/           what the containers write for the host
-    ├── api-data/     hydrorisk_plugin.zip
+    ├── api-data/     hydrorisk_plugin.zip, and hydrorisk_plugin_without_inversion.zip
     └── daemon-data/  job folders and logs
 ```
 
@@ -81,7 +81,7 @@ for instance, touches all three.
 
 | Task | How |
 |:--|:--|
-| Install the plugin | `docker/volume/api-data/hydrorisk_plugin.zip` → QGIS, *Install from ZIP* ([details](hydrorisk://gateway/qgis_plugin/)) |
+| Install the plugin | `docker/volume/api-data/hydrorisk_plugin.zip` → QGIS, *Install from ZIP*; `hydrorisk_plugin_without_inversion.zip` for users who should not run inversions ([details](hydrorisk://gateway/qgis_plugin/)) |
 | Add a user, issue a token | Datastore's console in the db container ([details](hydrorisk://datastore/admin/)) |
 | Watch the jobs | the daemon's status display: `docker logs -f hydrorisk-daemon` ([details](hydrorisk://daemon/operations/)) |
 | Logs | `docker logs hydrorisk-api`, `docker logs hydrorisk-daemon`; a job's log in `volume/daemon-data` |

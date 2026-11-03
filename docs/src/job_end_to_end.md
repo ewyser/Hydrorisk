@@ -95,8 +95,9 @@ inputs of another job. Deleting the job deletes them too.
 
 ## Another kind of job: bathymetry inversion
 
-A job's **kind** (`job.kind`, chosen on the wizard's first page) says what it
-computes. A *hydraulic simulation* runs prepare → execute → post as above. A
+A job's **kind** (`job.kind`) says what it computes. In QGIS, the plugin's *Job*
+tool makes simulations and its *Bathymetry inversion* tool inversions (the
+latter only in the full version of the plugin). A *hydraulic simulation* runs prepare → execute → post as above. A
 *bathymetry inversion* runs **prepare → inverse → post**. It recovers the bed of a
 river reach from an observed surface velocity (two rasters, `velocity_x` and
 `velocity_y`, plus optionally the water surface elevation), starting from a prior

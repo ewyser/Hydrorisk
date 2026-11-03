@@ -600,6 +600,7 @@ if docker logs hydrorisk-api 2>&1 | grep -q "not writable by apiuser"; then
     echo "⚠️  api can't write to $API_DIR - the QGIS plugin zip stays inside the container. See: docker logs hydrorisk-api"
 else
     echo "   QGIS plugin zip (install via QGIS > Plugins > Install from ZIP): $API_DIR/hydrorisk_plugin.zip"
+    echo "   ... and without the Bathymetry inversion tool:                   $API_DIR/hydrorisk_plugin_without_inversion.zip"
 fi
 
 # Images replaced by sync_images above: the recreated containers now run on

@@ -159,9 +159,10 @@ services:
       HYDRORISK_DB_PASSWORD: ${POSTGRES_PASSWORD}
       HYDRORISK_API: "true"
       VOLUME_MOUNT: /mnt/output
-    # Gateway.__init__ writes the QGIS plugin zip into $VOLUME_MOUNT
-    # (resolve_out_dir in Gateway.jl/src/needs/utils.jl), so it lands on
-    # the host as volume/api-data/hydrorisk_plugin.zip - falling back to the
+    # Gateway.__init__ writes the QGIS plugin zips into $VOLUME_MOUNT
+    # (resolve_out_dir in Gateway.jl/src/needs/utils.jl), so they land on
+    # the host as volume/api-data/hydrorisk_plugin.zip (and
+    # hydrorisk_plugin_without_inversion.zip) - falling back to the
     # in-container gis/ if the mount isn't writable.
     volumes:
       - ../volume/api-data:/mnt/output

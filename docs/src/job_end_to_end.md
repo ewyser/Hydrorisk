@@ -32,8 +32,8 @@ sequenceDiagram
 
 ## 1. Data in
 
-The user uploads their datasets from the plugin's **Dataset** tool: rasters,
-shapefiles, CSV tables, or folders of radar precipitation files. Gateway
+The user uploads their datasets from the plugin's **Inputs** and **Observations**
+tools: rasters, shapefiles, CSV tables, or folders of radar precipitation files. Gateway
 receives the file and Datastore imports it into its own table, owned by the
 user, under a category that says which job input it can fill, and used as
 an **input** (data a job runs on) or an **observation** (what a model is compared
@@ -44,7 +44,7 @@ with, e.g. an observed velocity), as the category's catalog entry says.
 
 ## 2. The job is set up and submitted
 
-The plugin's **Job** wizard builds the job configuration from the catalogs
+The plugin's **Simulation** wizard builds the job configuration from the catalogs
 the platform publishes: a name, the dataset for each input (elevation, land
 use, precipitation, …), the solver settings, the results to keep, and the
 area and period. Gateway checks the name and that every input is one of the
@@ -90,7 +90,7 @@ tasks that did not complete, from their start.
 
 ## 5. Results out
 
-The results are datasets like any other: listed in the **Dataset** tool
+The results are datasets like any other: listed in the **Results** tool
 (under *Simulations*), loaded as layers, stepped through in **Explore raster**,
 read at gauges with **Extract timeserie from point**, usable as inputs of another
 job where it takes them (an inversion's recovered bed as an elevation). Deleting the job deletes them too.
@@ -100,7 +100,7 @@ job where it takes them (an inversion's recovered bed as an elevation). Deleting
 ## Another workflow: bathymetry inversion
 
 A job's **workflow** (`job.workflow`) says what it computes. In QGIS, the plugin's
-*Job* tool makes simulations and its *Bathymetry inversion* tool inversions (the
+*Simulation* tool makes simulations and its *Bathymetry inversion* tool inversions (the
 latter only in the full version of the plugin). A *hydraulic simulation* runs
 prepare → execute → post as above. A
 *bathymetry inversion* runs **prepare → inverse → post**. It recovers the bed of a

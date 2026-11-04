@@ -35,7 +35,9 @@ sequenceDiagram
 The user uploads their datasets from the plugin's **Dataset** tool: rasters,
 shapefiles, CSV tables, or folders of radar precipitation files. Gateway
 receives the file and Datastore imports it into its own table, owned by the
-user, under a category that says which job input it can fill.
+user, under a category that says which job input it can fill, and used as
+an **input** (data a job runs on) or an **observation** (what a model is compared
+with, e.g. an observed velocity), as the category's catalog entry says.
 
 → [Datastore: data import](hydrorisk://datastore/data_import/) ·
 [Gateway: datasets](hydrorisk://gateway/using_the_api/#Datasets)
@@ -62,8 +64,9 @@ process, which runs OsmotiC's three tasks:
 2. **execute** runs cORIUm over the period, one leg per time step of the
    input series, reporting progress at each checkpoint and stopping if the
    user aborts;
-3. **post** stores the requested results as raster datasets, owned by the
-   user and linked to the job.
+3. **post** stores the requested results (the job's `save.results`) as raster
+   datasets, owned by the user and linked to the job: **simulations**, each in the
+   category of the quantity it holds (`height`, `discharge_x`, `height_max`, …).
 
 The daemon records each task's status and progress in the database.
 
@@ -87,17 +90,19 @@ tasks that did not complete, from their start.
 
 ## 5. Results out
 
-The results are datasets like any other: listed in the **Dataset** tool,
-loaded as layers, stepped through in the **Timeserie Explorer**, usable as
-inputs of another job. Deleting the job deletes them too.
+The results are datasets like any other: listed in the **Dataset** tool
+(under *Simulations*), loaded as layers, stepped through in **Explore raster**,
+read at gauges with **Extract timeserie from point**, usable as inputs of another
+job where it takes them (an inversion's recovered bed as an elevation). Deleting the job deletes them too.
 
 → [OsmotiC: outputs](hydrorisk://osmotic/outputs/)
 
-## Another kind of job: bathymetry inversion
+## Another workflow: bathymetry inversion
 
-A job's **kind** (`job.kind`) says what it computes. In QGIS, the plugin's *Job*
-tool makes simulations and its *Bathymetry inversion* tool inversions (the
-latter only in the full version of the plugin). A *hydraulic simulation* runs prepare → execute → post as above. A
+A job's **workflow** (`job.workflow`) says what it computes. In QGIS, the plugin's
+*Job* tool makes simulations and its *Bathymetry inversion* tool inversions (the
+latter only in the full version of the plugin). A *hydraulic simulation* runs
+prepare → execute → post as above. A
 *bathymetry inversion* runs **prepare → inverse → post**. It recovers the bed of a
 river reach from an observed surface velocity (two rasters, `velocity_x` and
 `velocity_y`, plus optionally the water surface elevation), starting from a prior

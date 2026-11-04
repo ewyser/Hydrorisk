@@ -92,3 +92,21 @@ loaded as layers, stepped through in the **Timeserie Explorer**, usable as
 inputs of another job. Deleting the job deletes them too.
 
 → [OsmotiC: outputs](hydrorisk://osmotic/outputs/)
+
+## Another kind of job: bathymetry inversion
+
+A job's **kind** (`job.kind`, chosen on the wizard's first page) says what it
+computes. A *hydraulic simulation* runs prepare → execute → post as above. A
+*bathymetry inversion* runs **prepare → inverse → post**. It recovers the bed of a
+river reach from an observed surface velocity (two rasters, `velocity_x` and
+`velocity_y`, plus optionally the water surface elevation), starting from a prior
+elevation model, with the drains as the inflow.
+
+`inverse` runs cORIUm repeatedly to a steady state, correcting the bed between
+runs until the simulated velocity matches the observed one. The results are the
+bed, the steady state and the misfit at each iteration, stepped through in the
+Timeserie Explorer, and the recovered bed as an elevation dataset for a follow-up
+simulation. The daemon picks the tasks from the kind; Gateway, the monitor and
+pause/resume work the same.
+
+→ [OsmotiC: bathymetry inversion](hydrorisk://osmotic/inversion/)
